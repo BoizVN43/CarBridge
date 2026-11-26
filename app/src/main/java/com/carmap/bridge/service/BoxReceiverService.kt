@@ -36,6 +36,7 @@ import com.carmap.bridge.model.MapProvider
 import com.carmap.bridge.model.ParsedMapLink
 import com.carmap.bridge.model.RemoteCommand
 import com.carmap.bridge.network.BleBoxServerTransport
+import com.carmap.bridge.network.BlePermissionsHelper
 import com.carmap.bridge.network.BoxNetworkConstants
 import com.carmap.bridge.network.BoxServerTransport
 import com.carmap.bridge.network.IncomingMapPacket
@@ -62,15 +63,23 @@ class BoxReceiverService : Service() {
         createNotificationChannel()
         val notification = buildNotification("Đang chờ link bản đồ từ điện thoại...")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIF_ID,
-                notification,
+            val fgsType = if (BlePermissionsHelper.hasAllPermissions(this)) {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            )
+            } else {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            }
+            runCatching {
+                startForeground(NOTIF_ID, notification, fgsType)
+            }.onFailure {
+                startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            }
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             startForeground(NOTIF_ID, notification)
+        }
+        if (BridgeRepository.state.value.autoStartOnBoot) {
+            BoxWatchdogJobService.schedule(this)
         }
 
         val lan = BoxServerTransport(
@@ -510,6 +519,7 @@ class BoxReceiverService : Service() {
         }
 
         fun stop(context: Context) {
+            BoxWatchdogJobService.cancel(context)
             context.stopService(Intent(context, BoxReceiverService::class.java))
         }
     }

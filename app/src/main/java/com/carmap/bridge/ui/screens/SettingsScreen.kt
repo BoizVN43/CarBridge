@@ -82,12 +82,14 @@ import com.carmap.bridge.update.RemoteReleaseInfo
 fun SettingsScreen(
     state: BridgeUiState,
     canDrawOverlays: Boolean,
+    isBatteryIgnored: Boolean,
     installedMaps: Map<MapProvider, Boolean>,
     bleStatus: BleStatus,
     availableUpdate: RemoteReleaseInfo?,
     onSwitchRole: (DeviceRole) -> Unit,
     onCheckUpdate: () -> Unit,
     onToggleBoxService: (Boolean) -> Unit,
+    onToggleAutoStartOnBoot: (Boolean) -> Unit,
     onToggleBle: (Boolean) -> Unit,
     onRequestBlePermissions: () -> Unit,
     onRequestOverlayPermission: () -> Unit,
@@ -100,11 +102,6 @@ fun SettingsScreen(
     var manualIp by remember { mutableStateOf("") }
     val installedVersion = remember { AppUpdater.getInstalledVersion(context) }
     val isPhone = state.role == DeviceRole.PHONE_SENDER
-
-    val isBatteryIgnored = remember(state.boxServiceRunning) {
-        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-        pm?.isIgnoringBatteryOptimizations(context.packageName) == true
-    }
 
     val hasNotificationPerm = remember(state.boxServiceRunning) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -183,7 +180,7 @@ fun SettingsScreen(
                             )
                             AppearanceAndRoleCard(state, accents, adaptive, onSwitchRole)
                         } else {
-                            AutoLaunchSettingsCard(state, accents, adaptive, onToggleBoxService)
+                            AutoLaunchSettingsCard(state, accents, adaptive, onToggleBoxService, onToggleAutoStartOnBoot)
                             BoxPermissionsAndAppsCard(
                                 canDrawOverlays = canDrawOverlays,
                                 hasNotificationPerm = hasNotificationPerm,
@@ -246,7 +243,7 @@ fun SettingsScreen(
                     }
                 } else {
                     item { BoxIdentitySettingsCard(state, adaptive, onToggleBle) }
-                    item { AutoLaunchSettingsCard(state, accents, adaptive, onToggleBoxService) }
+                    item { AutoLaunchSettingsCard(state, accents, adaptive, onToggleBoxService, onToggleAutoStartOnBoot) }
                     item {
                         BoxPermissionsAndAppsCard(
                             canDrawOverlays = canDrawOverlays,
@@ -633,9 +630,19 @@ private fun AutoLaunchSettingsCard(
     state: BridgeUiState,
     accents: CockpitAccents,
     adaptive: AdaptiveMetrics,
-    onToggleBoxService: (Boolean) -> Unit
+    onToggleBoxService: (Boolean) -> Unit,
+    onToggleAutoStartOnBoot: (Boolean) -> Unit
 ) {
-    SettingsGroupCard(title = "TỰ ĐỘNG MỞ BẢN ĐỒ") {
+    SettingsGroupCard(title = "TỰ KHỞI ĐỘNG & MỞ BẢN ĐỒ") {
+        SettingsToggleRow(
+            title = "Tự khởi động ngầm khi Box bật nguồn",
+            subtitle = state.lastBootStartNote?.let { "Tự bật gần nhất: $it · Có Watchdog giữ nền" }
+                ?: "Tự chạy ngầm khi nổ máy / bật Box + Watchdog tự phục hồi",
+            checked = state.autoStartOnBoot,
+            adaptive = adaptive,
+            onCheckedChange = onToggleAutoStartOnBoot
+        )
+        SettingsDivider()
         SettingsToggleRow(
             title = "Dịch vụ lắng nghe trên Box",
             subtitle = "Chờ link gửi tới từ điện thoại",

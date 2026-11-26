@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.widget.Toast
@@ -59,6 +60,7 @@ import com.carmap.bridge.network.BlePermissionsHelper
 import com.carmap.bridge.network.CarBridgeConnectionManager
 import com.carmap.bridge.parser.MediaLinkHelper
 import com.carmap.bridge.service.BoxReceiverService
+import com.carmap.bridge.service.BoxWatchdogJobService
 import com.carmap.bridge.ui.components.AppUpdateDialog
 import com.carmap.bridge.ui.components.CockpitFloatingNavBar
 import com.carmap.bridge.ui.components.CockpitNavTab
@@ -242,6 +244,12 @@ class MainActivity : ComponentActivity() {
             val lifecycleOwner = LocalLifecycleOwner.current
             var selectedTab by rememberSaveable { mutableIntStateOf(0) }
             var canDrawOverlays by remember { mutableStateOf(Settings.canDrawOverlays(this)) }
+            var isBatteryIgnored by remember {
+                mutableStateOf(
+                    (getSystemService(Context.POWER_SERVICE) as? PowerManager)
+                        ?.isIgnoringBatteryOptimizations(packageName) == true
+                )
+            }
 
             onBlePermResult = {
                 CarBridgeConnectionManager.refreshBle(BridgeRepository.state.value.bleEnabled)
@@ -268,6 +276,8 @@ class MainActivity : ComponentActivity() {
                 val observer = LifecycleEventObserver { _, event ->
                     if (event == Lifecycle.Event.ON_RESUME) {
                         canDrawOverlays = Settings.canDrawOverlays(this@MainActivity)
+                        isBatteryIgnored = (getSystemService(Context.POWER_SERVICE) as? PowerManager)
+                            ?.isIgnoringBatteryOptimizations(packageName) == true
                         CarBridgeConnectionManager.probeNow()
                         inspectClipboardForSuggestion()
                         scope.launch {
@@ -526,6 +536,7 @@ class MainActivity : ComponentActivity() {
                                     SettingsScreen(
                                         state = state,
                                         canDrawOverlays = canDrawOverlays,
+                                        isBatteryIgnored = isBatteryIgnored,
                                         installedMaps = installedMaps,
                                         bleStatus = bleStatus,
                                         availableUpdate = availableUpdate,
@@ -546,6 +557,11 @@ class MainActivity : ComponentActivity() {
                                         onToggleBoxService = { enable ->
                                             if (enable) BoxReceiverService.start(this@MainActivity)
                                             else BoxReceiverService.stop(this@MainActivity)
+                                        },
+                                        onToggleAutoStartOnBoot = { enable ->
+                                            BridgeRepository.setAutoStartOnBoot(enable)
+                                            if (enable) BoxWatchdogJobService.schedule(this@MainActivity)
+                                            else BoxWatchdogJobService.cancel(this@MainActivity)
                                         },
                                         onToggleBle = { enable ->
                                             BridgeRepository.setBleEnabled(enable)

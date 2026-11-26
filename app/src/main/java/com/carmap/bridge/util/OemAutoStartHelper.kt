@@ -5,9 +5,15 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import android.widget.Toast
 
 object OemAutoStartHelper {
     private val oemIntents = listOf(
+        // Car Android Box ROMs (FYT / SYU / Topway TS10 / Qualcomm Box)
+        ComponentName("com.syu.settings", "com.syu.settings.AutoStartActivity"),
+        ComponentName("com.ts.MainUI", "com.ts.set.SetBootAppActivity"),
+        ComponentName("com.android.settings", "com.android.settings.Settings\$AppAndNotificationDashboardActivity"),
+        // Phone / Tablet OEM ROMs
         ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"),
         ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"),
         ComponentName("com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity"),
@@ -27,16 +33,27 @@ object OemAutoStartHelper {
             }
             if (context.packageManager.resolveActivity(intent, 0) != null) {
                 val ok = runCatching { context.startActivity(intent); true }.getOrDefault(false)
-                if (ok) return
+                if (ok) {
+                    Toast.makeText(
+                        context,
+                        "Bật quyền Tự khởi động / Chạy nền cho CarBridge",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return
+                }
             }
         }
-        // Fallback: open App Details settings where Android Box ROMs place Auto-Start / Background permissions
         runCatching {
             val fallback = Intent(
                 Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                 Uri.parse("package:${context.packageName}")
             ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(fallback)
+            Toast.makeText(
+                context,
+                "Vào mục Pin / Sử dụng pin → chọn Không hạn chế để Box tự chạy ngầm",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 }

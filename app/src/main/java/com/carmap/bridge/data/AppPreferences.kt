@@ -26,11 +26,14 @@ data class PersistedOutboxItem(
 
 object AppPreferences {
     private const val PREF_NAME = "carmap_bridge_prefs"
+    private const val DEVICE_PROTECTED_PREF_NAME = "carmap_bridge_boot_prefs"
 
     private const val KEY_DEVICE_INSTANCE_ID = "device_instance_id"
     private const val KEY_THEME_MODE = "theme_mode"
     private const val KEY_ROLE = "device_role"
     private const val KEY_ROLE_CONFIGURED = "device_role_configured"
+    private const val KEY_AUTO_START_ON_BOOT = "auto_start_on_boot"
+    private const val KEY_LAST_BOOT_START_NOTE = "last_boot_start_note"
     private const val KEY_BOX_NAME = "box_name"
     private const val KEY_PAIRING_PIN = "pairing_pin"
     private const val KEY_BLE_ENABLED = "ble_enabled"
@@ -55,6 +58,38 @@ object AppPreferences {
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+
+    private fun bootPrefs(context: Context): SharedPreferences {
+        val dpCtx = context.applicationContext.createDeviceProtectedStorageContext()
+        return dpCtx.getSharedPreferences(DEVICE_PROTECTED_PREF_NAME, Context.MODE_PRIVATE)
+    }
+
+    fun shouldAutoStartOnBoot(context: Context): Boolean {
+        val dp = runCatching { bootPrefs(context) }.getOrNull()
+        if (dp != null && dp.contains(KEY_ROLE_CONFIGURED)) {
+            val configured = dp.getBoolean(KEY_ROLE_CONFIGURED, false)
+            val role = dp.getString(KEY_ROLE, DeviceRole.PHONE_SENDER.name)
+            val autoStart = dp.getBoolean(KEY_AUTO_START_ON_BOOT, true)
+            return configured && role == DeviceRole.CAR_BOX_RECEIVER.name && autoStart
+        }
+        return runCatching {
+            val p = prefs(context)
+            p.getBoolean(KEY_ROLE_CONFIGURED, false) &&
+                p.getString(KEY_ROLE, DeviceRole.PHONE_SENDER.name) == DeviceRole.CAR_BOX_RECEIVER.name &&
+                p.getBoolean(KEY_AUTO_START_ON_BOOT, true)
+        }.getOrDefault(false)
+    }
+
+    fun recordBootAutoStart(context: Context, trigger: String) {
+        val fmt = java.text.SimpleDateFormat("HH:mm dd/MM", java.util.Locale.getDefault())
+        val note = "${fmt.format(java.util.Date())} ($trigger)"
+        runCatching {
+            bootPrefs(context).edit().putString(KEY_LAST_BOOT_START_NOTE, note).apply()
+        }
+        runCatching {
+            prefs(context).edit().putString(KEY_LAST_BOOT_START_NOTE, note).apply()
+        }
+    }
 
     fun getOrCreateInstanceId(context: Context): String {
         val p = prefs(context)
@@ -107,10 +142,15 @@ object AppPreferences {
         val parkingPin = parseParkingPinJson(p.getString(KEY_PARKING_PIN_JSON, null))
         val pendingOutbox = loadPendingOutbox(context)
 
+        val lastBootNote = runCatching { bootPrefs(context).getString(KEY_LAST_BOOT_START_NOTE, null) }.getOrNull()
+            ?: p.getString(KEY_LAST_BOOT_START_NOTE, null)
+
         return BridgeUiState(
             themeMode = theme,
             role = role,
             roleConfigured = p.getBoolean(KEY_ROLE_CONFIGURED, false),
+            autoStartOnBoot = p.getBoolean(KEY_AUTO_START_ON_BOOT, true),
+            lastBootStartNote = lastBootNote,
             boxName = p.getString(KEY_BOX_NAME, "Android Box Mazda CX-5") ?: "Android Box Mazda CX-5",
             pairingPin = p.getString(KEY_PAIRING_PIN, "2689") ?: "2689",
             bleEnabled = p.getBoolean(KEY_BLE_ENABLED, true),
@@ -133,6 +173,7 @@ object AppPreferences {
             putString(KEY_THEME_MODE, state.themeMode.name)
             putString(KEY_ROLE, state.role.name)
             putBoolean(KEY_ROLE_CONFIGURED, state.roleConfigured)
+            putBoolean(KEY_AUTO_START_ON_BOOT, state.autoStartOnBoot)
             putString(KEY_BOX_NAME, state.boxName)
             putString(KEY_PAIRING_PIN, state.pairingPin)
             putBoolean(KEY_BLE_ENABLED, state.bleEnabled)
@@ -162,6 +203,14 @@ object AppPreferences {
                 remove(KEY_PARKING_PIN_JSON)
             }
             apply()
+        }
+        // Mirror boot flags into Device-Protected Storage so LOCKED_BOOT_COMPLETED works before unlock
+        runCatching {
+            bootPrefs(context).edit()
+                .putString(KEY_ROLE, state.role.name)
+                .putBoolean(KEY_ROLE_CONFIGURED, state.roleConfigured)
+                .putBoolean(KEY_AUTO_START_ON_BOOT, state.autoStartOnBoot)
+                .apply()
         }
     }
 

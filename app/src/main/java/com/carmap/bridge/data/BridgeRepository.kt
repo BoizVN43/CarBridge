@@ -39,6 +39,8 @@ data class BridgeUiState(
     val themeMode: ThemeMode = ThemeMode.DARK,
     val role: DeviceRole = DeviceRole.PHONE_SENDER,
     val roleConfigured: Boolean = false,
+    val autoStartOnBoot: Boolean = true,
+    val lastBootStartNote: String? = null,
     val boxName: String = "Android Box Mazda CX-5",
     val pairingPin: String = "2689",
     val boxServiceRunning: Boolean = false,
@@ -126,6 +128,11 @@ object BridgeRepository {
 
     fun setRole(role: DeviceRole) {
         _state.update { it.copy(role = role, roleConfigured = true) }
+        persist()
+    }
+
+    fun setAutoStartOnBoot(enabled: Boolean) {
+        _state.update { it.copy(autoStartOnBoot = enabled) }
         persist()
     }
 
