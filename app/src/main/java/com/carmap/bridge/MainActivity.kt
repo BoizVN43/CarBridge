@@ -65,7 +65,9 @@ import com.carmap.bridge.ui.screens.SettingsScreen
 import com.carmap.bridge.ui.theme.CarMapTheme
 import com.carmap.bridge.update.AppUpdater
 import com.carmap.bridge.util.PairingCodeHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -184,7 +186,19 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            val installedMaps = remember { MapIntentLauncher.isAnyMapAppInstalled(this) }
+            var installedMaps by remember { mutableStateOf<Map<com.carmap.bridge.model.MapProvider, Boolean>>(emptyMap()) }
+            LaunchedEffect(Unit) {
+                installedMaps = withContext(Dispatchers.IO) {
+                    MapIntentLauncher.isAnyMapAppInstalled(this@MainActivity)
+                }
+            }
+            val bleStatus = remember(state.bleAdvertising, state.bleScanning, state.bleEnabled) {
+                BlePermissionsHelper.inspectStatus(
+                    context = this@MainActivity,
+                    advertisingActive = state.bleAdvertising,
+                    scanningActive = state.bleScanning
+                )
+            }
 
             val handleSelectRole: (DeviceRole) -> Unit = { role ->
                 BridgeRepository.setRole(role)
@@ -335,11 +349,7 @@ class MainActivity : ComponentActivity() {
                                         state = state,
                                         canDrawOverlays = canDrawOverlays,
                                         installedMaps = installedMaps,
-                                        bleStatus = BlePermissionsHelper.inspectStatus(
-                                            context = this@MainActivity,
-                                            advertisingActive = state.bleAdvertising,
-                                            scanningActive = state.bleScanning
-                                        ),
+                                        bleStatus = bleStatus,
                                         availableUpdate = availableUpdate,
                                         onSwitchRole = handleSelectRole,
                                         onCheckUpdate = {

@@ -140,7 +140,7 @@ fun BoxQrPairingDialog(
                     }
                 }
                 Text(
-                    text = "Quét mã QR bằng camera điện thoại rồi copy/dán vào mục Ghép QR trên CarBridge.",
+                    text = "Mở CarBridge trên điện thoại → bấm nút QR để quét trực tiếp bằng camera và ghép ngay trong 1 giây.",
                     fontSize = 11.5.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center

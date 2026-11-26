@@ -1,5 +1,7 @@
 package com.carmap.bridge.model
 
+import androidx.compose.runtime.Immutable
+
 enum class ThemeMode(val label: String) {
     SYSTEM("Hệ thống"),
     LIGHT("Sáng"),
@@ -48,6 +50,7 @@ enum class LinkKind(val label: String) {
     UNKNOWN("Liên kết")
 }
 
+@Immutable
 data class MapWaypoint(
     val label: String,
     val lat: Double? = null,
@@ -61,6 +64,7 @@ data class MapWaypoint(
     }
 }
 
+@Immutable
 data class ParsedMapLink(
     val rawInput: String,
     val extractedUrl: String?,
@@ -80,6 +84,7 @@ enum class TransportChannel(val label: String) {
     BLE("Bluetooth LE")
 }
 
+@Immutable
 data class DiscoveredBox(
     val id: String,
     val name: String,
@@ -91,12 +96,14 @@ data class DiscoveredBox(
     val lastSeenMs: Long = System.currentTimeMillis()
 )
 
+@Immutable
 data class SavedPlace(
     val id: String,
     val label: String,
     val rawLink: String
 )
 
+@Immutable
 data class SharedTransferRecord(
     val id: String,
     val timestampMs: Long,

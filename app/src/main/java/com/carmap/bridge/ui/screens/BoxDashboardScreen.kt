@@ -239,6 +239,9 @@ private fun BoxStatusHeroCard(
     adaptive: AdaptiveMetrics,
     onToggleBoxService: (Boolean) -> Unit
 ) {
+    val heroBrush = remember(accents) {
+        Brush.verticalGradient(listOf(accents.heroObsidianTop, accents.heroObsidian))
+    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
@@ -247,7 +250,7 @@ private fun BoxStatusHeroCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(accents.heroObsidianTop, accents.heroObsidian)))
+                .background(heroBrush)
                 .padding(adaptive.dp(12f))
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {

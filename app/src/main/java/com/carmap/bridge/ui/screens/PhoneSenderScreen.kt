@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PushPin
+import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Route
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Settings
@@ -80,6 +81,8 @@ import com.carmap.bridge.model.TransportChannel
 import com.carmap.bridge.parser.MapLinkResolver
 import com.carmap.bridge.parser.MediaLinkHelper
 import com.carmap.bridge.ui.components.CockpitPill
+import com.carmap.bridge.ui.components.PhoneQrPairInputDialog
+import com.carmap.bridge.ui.components.QrCameraScannerDialog
 import com.carmap.bridge.ui.theme.AdaptiveMetrics
 import com.carmap.bridge.ui.theme.CockpitAccents
 import com.carmap.bridge.ui.theme.LocalAdaptiveMetrics
@@ -371,6 +374,33 @@ private fun HeroBoxTargetCard(
 ) {
     val context = LocalContext.current
     val activeBox = state.pairedBox
+    var showCameraScanner by remember { mutableStateOf(false) }
+    var showManualQr by remember { mutableStateOf(false) }
+    val heroBrush = remember(accents) {
+        Brush.verticalGradient(listOf(accents.heroObsidianTop, accents.heroObsidian))
+    }
+
+    if (showCameraScanner) {
+        QrCameraScannerDialog(
+            onScanned = { parsed ->
+                if (parsed.pin.isNotBlank()) BridgeRepository.updateSettings(pin = parsed.pin)
+                BridgeRepository.upsertDiscoveredBox(parsed.box)
+                BridgeRepository.selectPairedBox(context, parsed.box)
+            },
+            onFallbackManual = { showManualQr = true },
+            onDismiss = { showCameraScanner = false }
+        )
+    }
+    if (showManualQr) {
+        PhoneQrPairInputDialog(
+            onParsed = { parsed ->
+                if (parsed.pin.isNotBlank()) BridgeRepository.updateSettings(pin = parsed.pin)
+                BridgeRepository.upsertDiscoveredBox(parsed.box)
+                BridgeRepository.selectPairedBox(context, parsed.box)
+            },
+            onDismiss = { showManualQr = false }
+        )
+    }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -380,7 +410,7 @@ private fun HeroBoxTargetCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(accents.heroObsidianTop, accents.heroObsidian)))
+                .background(heroBrush)
                 .padding(adaptive.dp(12f))
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -424,7 +454,21 @@ private fun HeroBoxTargetCard(
                             )
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        CockpitPill(
+                            onClick = { showCameraScanner = true },
+                            shape = RoundedCornerShape(999.dp),
+                            color = Color(0x2238BDF8)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Rounded.QrCodeScanner, contentDescription = "Quét QR", tint = Color(0xFF38BDF8), modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(3.dp))
+                                Text("QR", fontSize = adaptive.sp(11f), color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+                            }
+                        }
                         CockpitPill(
                             onClick = onPingBox,
                             shape = RoundedCornerShape(999.dp),
@@ -445,12 +489,10 @@ private fun HeroBoxTargetCard(
                             color = Color(0x18FFFFFF)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Rounded.Settings, contentDescription = null, tint = Color(0xFFCBD5E1), modifier = Modifier.size(13.dp))
-                                Spacer(Modifier.width(3.dp))
-                                Text("Box", fontSize = adaptive.sp(11f), color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Icon(Icons.Rounded.Settings, contentDescription = "Cài đặt", tint = Color(0xFFCBD5E1), modifier = Modifier.size(13.dp))
                             }
                         }
                     }

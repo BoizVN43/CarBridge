@@ -63,6 +63,7 @@ import com.carmap.bridge.network.BleStatus
 import com.carmap.bridge.ui.components.BoxQrPairingDialog
 import com.carmap.bridge.ui.components.CockpitPill
 import com.carmap.bridge.ui.components.PhoneQrPairInputDialog
+import com.carmap.bridge.ui.components.QrCameraScannerDialog
 import com.carmap.bridge.ui.components.SettingsActionRow
 import com.carmap.bridge.ui.components.SettingsDivider
 import com.carmap.bridge.ui.components.SettingsGroupCard
@@ -465,7 +466,21 @@ private fun PhoneConnectionSettingsCard(
         }
 
         SettingsDivider()
+        var showCameraScanner by remember { mutableStateOf(false) }
         var showQrInput by remember { mutableStateOf(false) }
+        if (showCameraScanner) {
+            QrCameraScannerDialog(
+                onScanned = { parsed ->
+                    if (parsed.pin.isNotBlank()) {
+                        BridgeRepository.updateSettings(pin = parsed.pin)
+                    }
+                    BridgeRepository.upsertDiscoveredBox(parsed.box)
+                    BridgeRepository.selectPairedBox(context, parsed.box)
+                },
+                onFallbackManual = { showQrInput = true },
+                onDismiss = { showCameraScanner = false }
+            )
+        }
         if (showQrInput) {
             PhoneQrPairInputDialog(
                 onParsed = { parsed ->
@@ -482,11 +497,11 @@ private fun PhoneConnectionSettingsCard(
             icon = Icons.Rounded.QrCode2,
             tint = accents.emerald,
             bg = accents.emeraldContainer,
-            title = "Ghép nhanh bằng mã QR",
-            subtitle = "Quét hoặc dán mã ghép từ màn hình Android Box",
-            trailingText = "Mở",
+            title = "Quét mã QR ghép Box bằng Camera",
+            subtitle = "Đưa camera vào mã QR trên màn hình Android Box để ghép ngay",
+            trailingText = "Quét QR",
             trailingHighlight = true,
-            onClick = { showQrInput = true }
+            onClick = { showCameraScanner = true }
         )
 
         SettingsDivider()

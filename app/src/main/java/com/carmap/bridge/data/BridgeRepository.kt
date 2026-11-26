@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
+import androidx.compose.runtime.Immutable
 import com.carmap.bridge.R
 import com.carmap.bridge.ShareReceiverActivity
 import com.carmap.bridge.model.DeviceRole
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 data class SampleMapLink(
     val label: String,
@@ -31,6 +33,7 @@ data class SampleMapLink(
     val rawText: String
 )
 
+@Immutable
 data class BridgeUiState(
     val themeMode: ThemeMode = ThemeMode.DARK,
     val role: DeviceRole = DeviceRole.PHONE_SENDER,
@@ -62,6 +65,7 @@ object BridgeRepository {
 
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var appContext: Context? = null
+    private val boxLastSeenMap = ConcurrentHashMap<String, Long>()
     var deviceInstanceId: String = "cb-local"
         private set
 
@@ -146,17 +150,30 @@ object BridgeRepository {
         }
     }
 
+    private fun boxKey(box: DiscoveredBox): String = "${box.channel.name}:${box.id}:${box.host}:${box.port}"
+
     fun upsertDiscoveredBox(box: DiscoveredBox) {
         if (!box.isLocalDemo && box.id == deviceInstanceId) return
+        boxLastSeenMap[boxKey(box)] = System.currentTimeMillis()
+        // Fast path: if an identical box is already in state (only heartbeat timestamp changed),
+        // skip StateFlow emission completely to prevent unnecessary 2-second UI recompositions!
+        val cur = _state.value
+        val existing = cur.discoveredBoxes.firstOrNull {
+            it.channel == box.channel && it.host == box.host && it.port == box.port &&
+                it.id == box.id && it.name == box.name && it.bleAddress == box.bleAddress
+        }
+        if (existing != null && cur.pairedBox != null) return
+
+        val normalizedBox = box.copy(lastSeenMs = 0L)
         _state.update { current ->
             val filtered = current.discoveredBoxes.filterNot {
-                (it.channel == box.channel && it.host == box.host && it.port == box.port) ||
-                    (it.channel == box.channel && it.id == box.id && !it.isLocalDemo)
+                (it.channel == normalizedBox.channel && it.host == normalizedBox.host && it.port == normalizedBox.port) ||
+                    (it.channel == normalizedBox.channel && it.id == normalizedBox.id && !it.isLocalDemo)
             }
-            val updated = (filtered + box).sortedByDescending { it.isLocalDemo }
+            val updated = (filtered + normalizedBox).sortedByDescending { it.isLocalDemo }
             val updatedPaired = when {
-                current.pairedBox == null -> box
-                current.pairedBox.id == box.id && current.pairedBox.channel == box.channel -> box
+                current.pairedBox == null -> normalizedBox
+                current.pairedBox.id == normalizedBox.id && current.pairedBox.channel == normalizedBox.channel -> normalizedBox
                 else -> current.pairedBox
             }
             current.copy(discoveredBoxes = updated, pairedBox = updatedPaired)
@@ -167,11 +184,19 @@ object BridgeRepository {
         val cutoff = System.currentTimeMillis() - maxAgeMs
         _state.update { current ->
             val kept = current.discoveredBoxes.filter { box ->
-                box.isLocalDemo || box.id.startsWith("manual-") || box.lastSeenMs >= cutoff
+                if (box.isLocalDemo || box.id.startsWith("manual-") || box.id.startsWith("qr-")) {
+                    true
+                } else {
+                    val lastSeen = boxLastSeenMap[boxKey(box)] ?: box.lastSeenMs
+                    lastSeen >= cutoff
+                }
             }
             if (kept.size == current.discoveredBoxes.size) return@update current
             val nextPaired = current.pairedBox?.let { paired ->
-                if (kept.any { it.host == paired.host && it.channel == paired.channel } || paired.id.startsWith("manual-")) {
+                if (kept.any { it.host == paired.host && it.channel == paired.channel } ||
+                    paired.id.startsWith("manual-") ||
+                    paired.id.startsWith("qr-")
+                ) {
                     paired
                 } else {
                     kept.firstOrNull()
