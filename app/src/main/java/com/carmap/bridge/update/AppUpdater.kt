@@ -19,6 +19,7 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class InstalledAppVersion(
     val versionCode: Long,
@@ -75,6 +76,9 @@ object AppUpdater {
 
     private val _availableUpdate = MutableStateFlow<RemoteReleaseInfo?>(null)
     val availableUpdate: StateFlow<RemoteReleaseInfo?> = _availableUpdate.asStateFlow()
+
+    private val checkInProgress = AtomicBoolean(false)
+    private val downloadInProgress = AtomicBoolean(false)
 
     fun getInstalledVersion(context: Context): InstalledAppVersion {
         return try {
@@ -194,73 +198,80 @@ object AppUpdater {
         forceBypassCooldown: Boolean = false,
         autoShowDialog: Boolean = false
     ): OtaUpdateState = withContext(Dispatchers.IO) {
-        val endpoint = "https://api.github.com/repos/$DEFAULT_OTA_REPO/releases/latest"
-        val prefs = context.getSharedPreferences(PREFS_OTA, Context.MODE_PRIVATE)
-
-        if (silent && !forceBypassCooldown) {
-            val elapsed = System.currentTimeMillis() - prefs.getLong(KEY_LAST_CHECK_MS, 0L)
-            if (elapsed in 0L until AUTO_CHECK_COOLDOWN_MS) {
-                if (autoShowDialog) {
-                    loadCachedAvailability(context)
-                    _availableUpdate.value?.let { presentAutoDialogIfUnseen(context, it, true) }
-                }
-                return@withContext _state.value
-            }
+        if (!checkInProgress.compareAndSet(false, true)) {
+            return@withContext _state.value
         }
-
-        if (!silent) {
-            _state.value = OtaUpdateState.Checking
-        }
-
-        val installed = getInstalledVersion(context)
-        val savedEtag = if (silent) prefs.getString(KEY_LAST_ETAG, null) else null
-
         try {
-            val fetchRes = fetchTextWithEtag(endpoint, savedEtag)
-            prefs.edit().putLong(KEY_LAST_CHECK_MS, System.currentTimeMillis()).apply()
+            val endpoint = "https://api.github.com/repos/$DEFAULT_OTA_REPO/releases/latest"
+            val prefs = context.getSharedPreferences(PREFS_OTA, Context.MODE_PRIVATE)
 
-            if (fetchRes.notModified) {
-                loadCachedAvailability(context)
-                val cached = _availableUpdate.value
-                return@withContext if (cached != null) {
-                    presentAutoDialogIfUnseen(context, cached, autoShowDialog)
-                    val available = OtaUpdateState.UpdateAvailable(cached)
+            if (silent && !forceBypassCooldown) {
+                val elapsed = System.currentTimeMillis() - prefs.getLong(KEY_LAST_CHECK_MS, 0L)
+                if (elapsed in 0L until AUTO_CHECK_COOLDOWN_MS) {
+                    if (autoShowDialog) {
+                        loadCachedAvailability(context)
+                        _availableUpdate.value?.let { presentAutoDialogIfUnseen(context, it, true) }
+                    }
+                    return@withContext _state.value
+                }
+            }
+
+            if (!silent) {
+                _state.value = OtaUpdateState.Checking
+            }
+
+            val installed = getInstalledVersion(context)
+            val savedEtag = if (silent) prefs.getString(KEY_LAST_ETAG, null) else null
+
+            try {
+                val fetchRes = fetchTextWithEtag(endpoint, savedEtag)
+                prefs.edit().putLong(KEY_LAST_CHECK_MS, System.currentTimeMillis()).apply()
+
+                if (fetchRes.notModified) {
+                    loadCachedAvailability(context)
+                    val cached = _availableUpdate.value
+                    return@withContext if (cached != null) {
+                        presentAutoDialogIfUnseen(context, cached, autoShowDialog)
+                        val available = OtaUpdateState.UpdateAvailable(cached)
+                        if (!silent) _state.value = available
+                        available
+                    } else {
+                        emitOutcome(silent, OtaUpdateState.UpToDate(installed.versionName))
+                    }
+                }
+
+                if (!fetchRes.etag.isNullOrBlank()) {
+                    prefs.edit().putString(KEY_LAST_ETAG, fetchRes.etag).apply()
+                }
+
+                val release = parseReleaseJson(fetchRes.body)
+                    ?: return@withContext emitOutcome(
+                        silent,
+                        OtaUpdateState.Error("Bản phát hành mới nhất chưa có tệp .apk đính kèm.")
+                    )
+
+                if (isRemoteNewer(installed, release)) {
+                    saveCachedAvailability(context, release)
+                    presentAutoDialogIfUnseen(context, release, autoShowDialog)
+                    val available = OtaUpdateState.UpdateAvailable(release)
                     if (!silent) _state.value = available
                     available
                 } else {
+                    clearCachedAvailability(context)
                     emitOutcome(silent, OtaUpdateState.UpToDate(installed.versionName))
                 }
+            } catch (e: Exception) {
+                val msg = when {
+                    e.message?.contains("404") == true ->
+                        "Chưa tìm thấy bản phát hành nào trên GitHub (HTTP 404)."
+                    e.message?.contains("403") == true ->
+                        "GitHub tạm giới hạn lượt kiểm tra (HTTP 403). Thử lại sau vài phút."
+                    else -> "Không thể kết nối kiểm tra cập nhật: ${e.localizedMessage ?: "lỗi mạng"}"
+                }
+                emitOutcome(silent, OtaUpdateState.Error(msg))
             }
-
-            if (!fetchRes.etag.isNullOrBlank()) {
-                prefs.edit().putString(KEY_LAST_ETAG, fetchRes.etag).apply()
-            }
-
-            val release = parseReleaseJson(fetchRes.body)
-                ?: return@withContext emitOutcome(
-                    silent,
-                    OtaUpdateState.Error("Bản phát hành mới nhất chưa có tệp .apk đính kèm.")
-                )
-
-            if (isRemoteNewer(installed, release)) {
-                saveCachedAvailability(context, release)
-                presentAutoDialogIfUnseen(context, release, autoShowDialog)
-                val available = OtaUpdateState.UpdateAvailable(release)
-                if (!silent) _state.value = available
-                available
-            } else {
-                clearCachedAvailability(context)
-                emitOutcome(silent, OtaUpdateState.UpToDate(installed.versionName))
-            }
-        } catch (e: Exception) {
-            val msg = when {
-                e.message?.contains("404") == true ->
-                    "Chưa tìm thấy bản phát hành nào trên GitHub (HTTP 404)."
-                e.message?.contains("403") == true ->
-                    "GitHub tạm giới hạn lượt kiểm tra (HTTP 403). Thử lại sau vài phút."
-                else -> "Không thể kết nối kiểm tra cập nhật: ${e.localizedMessage ?: "lỗi mạng"}"
-            }
-            emitOutcome(silent, OtaUpdateState.Error(msg))
+        } finally {
+            checkInProgress.set(false)
         }
     }
 
@@ -333,6 +344,9 @@ object AppUpdater {
     }
 
     suspend fun downloadUpdate(context: Context, release: RemoteReleaseInfo): File? = withContext(Dispatchers.IO) {
+        if (!downloadInProgress.compareAndSet(false, true)) {
+            return@withContext null
+        }
         val updatesDir = File(context.cacheDir, "updates").apply { mkdirs() }
         val partFile = File(updatesDir, "carbridge-update.apk.part")
         val finalFile = File(updatesDir, "carbridge-update.apk")
@@ -388,6 +402,7 @@ object AppUpdater {
             null
         } finally {
             conn?.disconnect()
+            downloadInProgress.set(false)
         }
     }
 

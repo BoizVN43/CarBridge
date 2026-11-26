@@ -60,7 +60,7 @@ object MapLinkResolver {
         return parseResolved(trimmed, extractedUrl, extractedUrl ?: trimmed)
     }
 
-    private fun needsRedirectExpansion(url: String): Boolean {
+    fun needsRedirectExpansion(url: String): Boolean {
         val host = runCatching { Uri.parse(url).host?.lowercase(Locale.ROOT) }.getOrNull() ?: return false
         return host in shortHosts || (host == "waze.com" && url.contains("/ul"))
     }
@@ -208,13 +208,19 @@ object MapLinkResolver {
         }
         val labelInParens = queryParam?.let { parenLabelRegex.find(it)?.groupValues?.getOrNull(1)?.trim() }
         val cleanQuery = labelInParens ?: queryParam?.takeUnless { coordRegex.matches(it.trim()) }
-        val title = listOfNotNull(prefixText, placeFromPath, cleanQuery)
-            .firstOrNull { it.isNotBlank() && !it.startsWith("http") }
+        val plainAddressText = if (extractedUrl == null && coords == null && !rawInput.startsWith("geo:", ignoreCase = true)) {
+            rawInput.trim().takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
+        val title = listOfNotNull(prefixText, placeFromPath, cleanQuery, plainAddressText)
+            .firstOrNull { it.isNotBlank() && !it.startsWith("http", ignoreCase = true) }
             ?: coords?.let { "Tọa độ ${formatCoords(it)}" }
             ?: "Điểm đến bản đồ"
 
         val kind = when {
             extractedUrl == null && coords != null -> LinkKind.COORDINATES
+            plainAddressText != null -> LinkKind.PLACE
             coords != null && placeFromPath == null && prefixText == null && queryParam == null -> LinkKind.COORDINATES
             extractedUrl != null -> LinkKind.PLACE
             else -> LinkKind.UNKNOWN

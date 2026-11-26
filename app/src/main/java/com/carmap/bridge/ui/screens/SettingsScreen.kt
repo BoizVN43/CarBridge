@@ -91,6 +91,7 @@ fun SettingsScreen(
     onToggleBoxService: (Boolean) -> Unit,
     onToggleAutoStartOnBoot: (Boolean) -> Unit,
     onToggleBle: (Boolean) -> Unit,
+    onToggleProximity2m: (Boolean) -> Unit,
     onRequestBlePermissions: () -> Unit,
     onRequestOverlayPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
@@ -149,7 +150,8 @@ fun SettingsScreen(
                                         manualIp = ""
                                     }
                                 },
-                                onToggleBle = onToggleBle
+                                onToggleBle = onToggleBle,
+                                onToggleProximity2m = onToggleProximity2m
                             )
                         } else {
                             BoxIdentitySettingsCard(state, adaptive, onToggleBle)
@@ -224,7 +226,8 @@ fun SettingsScreen(
                                     manualIp = ""
                                 }
                             },
-                            onToggleBle = onToggleBle
+                            onToggleBle = onToggleBle,
+                            onToggleProximity2m = onToggleProximity2m
                         )
                     }
                     item {
@@ -386,7 +389,8 @@ private fun PhoneConnectionSettingsCard(
     adaptive: AdaptiveMetrics,
     onManualIpChange: (String) -> Unit,
     onPairManual: () -> Unit,
-    onToggleBle: (Boolean) -> Unit
+    onToggleBle: (Boolean) -> Unit,
+    onToggleProximity2m: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     SettingsGroupCard(title = "KẾT NỐI ANDROID BOX") {
@@ -415,8 +419,9 @@ private fun PhoneConnectionSettingsCard(
                         shape = RoundedCornerShape(999.dp),
                         color = if (selected) accents.emeraldContainer else MaterialTheme.colorScheme.surfaceVariant
                     ) {
+                        val distTag = box.estimatedDistanceMeters?.let { " · ~${it}m" }.orEmpty()
                         Text(
-                            text = "${box.name} (${box.host})",
+                            text = "${box.name} (${box.host})$distTag",
                             fontSize = adaptive.sp(11.5f),
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                             color = if (selected) accents.emerald else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -508,6 +513,14 @@ private fun PhoneConnectionSettingsCard(
             checked = state.preferBleOverLan,
             adaptive = adaptive,
             onCheckedChange = { BridgeRepository.setPreferBleOverLan(it) }
+        )
+        SettingsDivider()
+        SettingsToggleRow(
+            title = "Chỉ quét & kết nối gần (~2m)",
+            subtitle = "Chỉ nhận Box trong cabin xe qua cường độ sóng BLE (tránh bắt nhầm xe đậu cạnh)",
+            checked = state.proximityOnly2m,
+            adaptive = adaptive,
+            onCheckedChange = onToggleProximity2m
         )
     }
 }

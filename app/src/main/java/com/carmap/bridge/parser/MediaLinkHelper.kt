@@ -36,6 +36,21 @@ object MediaLinkHelper {
         return DetectedMediaLink(url = url, serviceName = service, title = title)
     }
 
+    private val shortRedirectHosts = setOf(
+        "maps.app.goo.gl",
+        "goo.gl",
+        "g.co",
+        "ul.waze.com",
+        "bit.ly",
+        "tinyurl.com"
+    )
+
+    fun isShortRedirectUrl(url: String): Boolean {
+        val host = runCatching { java.net.URI(url).host?.lowercase()?.removePrefix("www.") }.getOrNull()
+            ?: return false
+        return host in shortRedirectHosts
+    }
+
     fun isKnownMapUrl(url: String): Boolean {
         val lower = url.lowercase()
         return lower.contains("maps.google") ||
@@ -48,11 +63,13 @@ object MediaLinkHelper {
     }
 
     /**
-     * Detects any general http(s) web URL that is NOT a map URL or known media URL (for Browser Cast).
+     * Detects any general http(s) web URL that is NOT a map URL, known media URL,
+     * or short redirect URL (unless allowShortRedirect=true after expansion).
      */
-    fun extractGenericWebLink(rawText: String): String? {
+    fun extractGenericWebLink(rawText: String, allowShortRedirect: Boolean = false): String? {
         val url = urlRegex.find(rawText)?.value?.trimEnd('.', ',', ';', ')') ?: return null
         if (isKnownMapUrl(url) || extractMediaLink(rawText) != null) return null
+        if (!allowShortRedirect && isShortRedirectUrl(url)) return null
         return url
     }
 
@@ -88,7 +105,7 @@ object MediaLinkHelper {
         val t = text.trim()
         if (t.isBlank() || t.length > 1200) return false
         if (extractMediaLink(t) != null) return true
-        if (extractGenericWebLink(t) != null) return true
+        if (extractGenericWebLink(t, allowShortRedirect = true) != null) return true
         val lower = t.lowercase()
         if (isKnownMapUrl(lower) || lower.startsWith("geo:")) {
             return true

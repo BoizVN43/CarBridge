@@ -66,6 +66,7 @@ object CarBridgeConnectionManager {
     private var btReceiver: BroadcastReceiver? = null
     private var pruneJob: Job? = null
     private var activeConsumers = 0
+    private var discoveryStartedAtMs = 0L
 
     @Volatile
     private var pendingOutbox: PendingSendItem? = null
@@ -105,9 +106,20 @@ object CarBridgeConnectionManager {
             context = app,
             scope = scope,
             selfInstanceIdProvider = { BridgeRepository.deviceInstanceId },
+            proximityOnly2mProvider = { BridgeRepository.state.value.proximityOnly2m },
             onBoxFound = { box ->
-                BridgeRepository.upsertDiscoveredBox(box)
-                onBoxSeenOnline(app, box)
+                val state = BridgeRepository.state.value
+                val acceptedBox = if (state.proximityOnly2m && box.channel == TransportChannel.LAN && !box.isLocalDemo) {
+                    // Gate LAN auto-discovery behind BLE ~2m proximity check
+                    if (client?.hasRecentNearbyBleSighting() != true) {
+                        return@PhoneDiscoveryAndClient
+                    }
+                    box.copy(estimatedDistanceMeters = client?.nearestBleDistanceMeters())
+                } else {
+                    box
+                }
+                BridgeRepository.upsertDiscoveredBox(acceptedBox)
+                onBoxSeenOnline(app, acceptedBox)
                 tryFlushPendingOutbox()
             },
             onBleScanStateChanged = { scanning ->
@@ -133,7 +145,9 @@ object CarBridgeConnectionManager {
     fun retainDiscovery(context: Context) {
         init(context)
         activeConsumers += 1
-        val bleEnabled = BridgeRepository.state.value.bleEnabled
+        discoveryStartedAtMs = System.currentTimeMillis()
+        val state = BridgeRepository.state.value
+        val bleEnabled = state.bleEnabled || state.proximityOnly2m
         client?.startDiscovery(enableBle = bleEnabled)
         client?.sendActiveProbe()
         startPruneLoop()
@@ -344,16 +358,36 @@ object CarBridgeConnectionManager {
         init(context)
         val media = MediaLinkHelper.extractMediaLink(rawText)
         val webUrl = if (media == null) MediaLinkHelper.extractGenericWebLink(rawText) else null
-        val action = when {
+        var action = when {
             media != null -> BridgeAction.MEDIA_LINK
             webUrl != null -> BridgeAction.WEB_LINK
             else -> BridgeAction.MAP
         }
-        val parsed = when {
+        var parsed = when {
             media != null -> MediaLinkHelper.toParsedRecord(rawText, media)
             webUrl != null -> MediaLinkHelper.toWebParsedRecord(rawText, webUrl)
             preResolved != null -> preResolved
             else -> MapLinkResolver.resolveAndParse(rawText)
+        }
+        // Re-classify short redirect links (g.co, bit.ly, tinyurl...) after redirect expansion
+        if (action == BridgeAction.MAP &&
+            parsed.sourceProvider == MapProvider.UNKNOWN &&
+            parsed.primaryLat == null &&
+            parsed.resolvedUrl.startsWith("http", ignoreCase = true)
+        ) {
+            val resolvedMedia = MediaLinkHelper.extractMediaLink(parsed.resolvedUrl)
+            val resolvedWeb = if (resolvedMedia == null) {
+                MediaLinkHelper.extractGenericWebLink(parsed.resolvedUrl, allowShortRedirect = true)
+            } else {
+                null
+            }
+            if (resolvedMedia != null) {
+                action = BridgeAction.MEDIA_LINK
+                parsed = MediaLinkHelper.toParsedRecord(rawText, resolvedMedia)
+            } else if (resolvedWeb != null) {
+                action = BridgeAction.WEB_LINK
+                parsed = MediaLinkHelper.toWebParsedRecord(rawText, resolvedWeb)
+            }
         }
         val resolvedUrl = parsed.resolvedUrl
         val state = BridgeRepository.state.value
@@ -451,6 +485,12 @@ object CarBridgeConnectionManager {
                 val ctx = appContext
                 val state = BridgeRepository.state.value
                 val stillHasOnlineBox = state.discoveredBoxes.any { !it.isLocalDemo }
+                val elapsedSinceStart = System.currentTimeMillis() - discoveryStartedAtMs
+                // Save battery: step down BLE scan to BALANCED once Box is stably online after 10s
+                if (state.bleEnabled || state.proximityOnly2m) {
+                    val shouldUseBalanced = stillHasOnlineBox && elapsedSinceStart >= 10_000L
+                    client?.setBleBalancedMode(shouldUseBalanced)
+                }
                 if (!stillHasOnlineBox && activeConnectedBoxId.getAndSet(null) != null && ctx != null) {
                     CarBridgeNotifier.cancelBoxConnectedNotification(ctx)
                     if (state.role == DeviceRole.PHONE_SENDER) {

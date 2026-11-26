@@ -87,7 +87,9 @@ data class DiscoveredBox(
     val channel: TransportChannel = TransportChannel.LAN,
     val bleAddress: String? = null,
     val isLocalDemo: Boolean = false,
-    val lastSeenMs: Long = System.currentTimeMillis()
+    val lastSeenMs: Long = System.currentTimeMillis(),
+    val rssiDbm: Int? = null,
+    val estimatedDistanceMeters: Float? = null
 )
 
 @Immutable

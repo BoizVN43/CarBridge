@@ -3,6 +3,7 @@ package com.carmap.bridge.widget
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
@@ -77,5 +78,19 @@ class CarBridgeWidgetProvider : AppWidgetProvider() {
 
     companion object {
         const val EXTRA_SEND_SAVED_LINK = "extra_send_saved_link"
+
+        fun requestUpdate(context: Context) {
+            runCatching {
+                val app = context.applicationContext
+                val mgr = AppWidgetManager.getInstance(app)
+                val ids = mgr.getAppWidgetIds(ComponentName(app, CarBridgeWidgetProvider::class.java))
+                if (ids.isEmpty()) return
+                val intent = Intent(app, CarBridgeWidgetProvider::class.java).apply {
+                    action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
+                }
+                app.sendBroadcast(intent)
+            }
+        }
     }
 }

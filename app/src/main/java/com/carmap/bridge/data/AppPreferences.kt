@@ -24,6 +24,14 @@ data class PersistedOutboxItem(
     val queuedAtMs: Long
 )
 
+data class LoadedHeavyCollections(
+    val history: List<SharedTransferRecord>,
+    val savedPlaces: List<SavedPlace>,
+    val clipboardHistory: List<String>,
+    val parkingPin: ParkingPin?,
+    val pendingQueueTitle: String?
+)
+
 object AppPreferences {
     private const val PREF_NAME = "carmap_bridge_prefs"
     private const val DEVICE_PROTECTED_PREF_NAME = "carmap_bridge_boot_prefs"
@@ -38,6 +46,7 @@ object AppPreferences {
     private const val KEY_PAIRING_PIN = "pairing_pin"
     private const val KEY_BLE_ENABLED = "ble_enabled"
     private const val KEY_PREFER_BLE = "prefer_ble"
+    private const val KEY_PROXIMITY_ONLY_2M = "proximity_only_2m"
     private const val KEY_AUTO_OPEN = "auto_open"
     private const val KEY_SIMULATE_PREVIEW = "simulate_preview_v2"
     private const val KEY_BOX_TARGET = "box_preferred_target"
@@ -100,7 +109,7 @@ object AppPreferences {
         return created
     }
 
-    fun loadIntoState(context: Context): BridgeUiState {
+    fun loadFastCoreState(context: Context): BridgeUiState {
         val p = prefs(context)
         val theme = runCatching {
             ThemeMode.valueOf(p.getString(KEY_THEME_MODE, ThemeMode.DARK.name)!!)
@@ -136,12 +145,6 @@ object AppPreferences {
             null
         }
 
-        val history = parseHistoryJson(p.getString(KEY_HISTORY_JSON, null))
-        val savedPlaces = parseSavedPlacesJson(p.getString(KEY_SAVED_PLACES_JSON, null))
-        val clipboardHistory = parseClipboardHistoryJson(p.getString(KEY_CLIPBOARD_HISTORY_JSON, null))
-        val parkingPin = parseParkingPinJson(p.getString(KEY_PARKING_PIN_JSON, null))
-        val pendingOutbox = loadPendingOutbox(context)
-
         val lastBootNote = runCatching { bootPrefs(context).getString(KEY_LAST_BOOT_START_NOTE, null) }.getOrNull()
             ?: p.getString(KEY_LAST_BOOT_START_NOTE, null)
 
@@ -155,20 +158,39 @@ object AppPreferences {
             pairingPin = p.getString(KEY_PAIRING_PIN, "2689") ?: "2689",
             bleEnabled = p.getBoolean(KEY_BLE_ENABLED, true),
             preferBleOverLan = p.getBoolean(KEY_PREFER_BLE, false),
+            proximityOnly2m = p.getBoolean(KEY_PROXIMITY_ONLY_2M, false),
             autoOpenOnBox = p.getBoolean(KEY_AUTO_OPEN, true),
             simulatePreviewOnEmulator = p.getBoolean(KEY_SIMULATE_PREVIEW, false),
             boxPreferredTarget = boxTarget,
             phoneTargetOverride = phoneTarget,
-            pairedBox = pairedBox,
-            history = history,
-            savedPlaces = savedPlaces,
-            clipboardHistory = clipboardHistory,
-            parkingPin = parkingPin,
-            pendingQueueTitle = pendingOutbox?.title
+            pairedBox = pairedBox
         )
     }
 
-    fun saveState(context: Context, state: BridgeUiState) {
+    fun loadHeavyCollections(context: Context): LoadedHeavyCollections {
+        val p = prefs(context)
+        return LoadedHeavyCollections(
+            history = parseHistoryJson(p.getString(KEY_HISTORY_JSON, null)),
+            savedPlaces = parseSavedPlacesJson(p.getString(KEY_SAVED_PLACES_JSON, null)),
+            clipboardHistory = parseClipboardHistoryJson(p.getString(KEY_CLIPBOARD_HISTORY_JSON, null)),
+            parkingPin = parseParkingPinJson(p.getString(KEY_PARKING_PIN_JSON, null)),
+            pendingQueueTitle = loadPendingOutbox(context)?.title
+        )
+    }
+
+    fun loadIntoState(context: Context): BridgeUiState {
+        val core = loadFastCoreState(context)
+        val heavy = loadHeavyCollections(context)
+        return core.copy(
+            history = heavy.history,
+            savedPlaces = heavy.savedPlaces,
+            clipboardHistory = heavy.clipboardHistory,
+            parkingPin = heavy.parkingPin,
+            pendingQueueTitle = heavy.pendingQueueTitle
+        )
+    }
+
+    fun saveConfigOnly(context: Context, state: BridgeUiState) {
         prefs(context).edit().apply {
             putString(KEY_THEME_MODE, state.themeMode.name)
             putString(KEY_ROLE, state.role.name)
@@ -178,6 +200,7 @@ object AppPreferences {
             putString(KEY_PAIRING_PIN, state.pairingPin)
             putBoolean(KEY_BLE_ENABLED, state.bleEnabled)
             putBoolean(KEY_PREFER_BLE, state.preferBleOverLan)
+            putBoolean(KEY_PROXIMITY_ONLY_2M, state.proximityOnly2m)
             putBoolean(KEY_AUTO_OPEN, state.autoOpenOnBox)
             putBoolean(KEY_SIMULATE_PREVIEW, state.simulatePreviewOnEmulator)
             putString(KEY_BOX_TARGET, state.boxPreferredTarget.name)
@@ -192,7 +215,20 @@ object AppPreferences {
                 putString(KEY_PAIRED_CHANNEL, box.channel.name)
                 putString(KEY_PAIRED_BLE, box.bleAddress)
             }
+            apply()
+        }
+        // Mirror boot flags into Device-Protected Storage so LOCKED_BOOT_COMPLETED works before unlock
+        runCatching {
+            bootPrefs(context).edit()
+                .putString(KEY_ROLE, state.role.name)
+                .putBoolean(KEY_ROLE_CONFIGURED, state.roleConfigured)
+                .putBoolean(KEY_AUTO_START_ON_BOOT, state.autoStartOnBoot)
+                .apply()
+        }
+    }
 
+    fun saveCollectionsOnly(context: Context, state: BridgeUiState) {
+        prefs(context).edit().apply {
             putString(KEY_HISTORY_JSON, serializeHistory(state.history))
             putString(KEY_SAVED_PLACES_JSON, serializeSavedPlaces(state.savedPlaces))
             putString(KEY_CLIPBOARD_HISTORY_JSON, serializeClipboardHistory(state.clipboardHistory))
@@ -204,14 +240,11 @@ object AppPreferences {
             }
             apply()
         }
-        // Mirror boot flags into Device-Protected Storage so LOCKED_BOOT_COMPLETED works before unlock
-        runCatching {
-            bootPrefs(context).edit()
-                .putString(KEY_ROLE, state.role.name)
-                .putBoolean(KEY_ROLE_CONFIGURED, state.roleConfigured)
-                .putBoolean(KEY_AUTO_START_ON_BOOT, state.autoStartOnBoot)
-                .apply()
-        }
+    }
+
+    fun saveState(context: Context, state: BridgeUiState) {
+        saveConfigOnly(context, state)
+        saveCollectionsOnly(context, state)
     }
 
     fun savePendingOutbox(context: Context, item: PersistedOutboxItem?) {

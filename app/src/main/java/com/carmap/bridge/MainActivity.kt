@@ -150,7 +150,17 @@ class MainActivity : ComponentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
-            inspectClipboardForSuggestion()
+            val state = BridgeRepository.state.value
+            if (state.roleConfigured && state.role == DeviceRole.CAR_BOX_RECEIVER) {
+                runCatching {
+                    val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    val text = cm?.primaryClip?.takeIf { it.itemCount > 0 }
+                        ?.getItemAt(0)?.coerceToText(this)?.toString()?.trim()
+                    BridgeRepository.updateCachedBoxClipboard(text)
+                }
+            } else {
+                inspectClipboardForSuggestion()
+            }
         }
     }
 
@@ -575,8 +585,16 @@ class MainActivity : ComponentActivity() {
                                         },
                                         onToggleBle = { enable ->
                                             BridgeRepository.setBleEnabled(enable)
-                                            CarBridgeConnectionManager.refreshBle(enable)
+                                            CarBridgeConnectionManager.refreshBle(enable || BridgeRepository.state.value.proximityOnly2m)
                                             BoxReceiverService.refreshBle(this@MainActivity)
+                                        },
+                                        onToggleProximity2m = { enable ->
+                                            BridgeRepository.setProximityOnly2m(enable)
+                                            if (enable && !BridgeRepository.state.value.bleEnabled) {
+                                                BridgeRepository.setBleEnabled(true)
+                                            }
+                                            CarBridgeConnectionManager.refreshBle(enable || BridgeRepository.state.value.bleEnabled)
+                                            CarBridgeConnectionManager.probeNow()
                                         },
                                         onRequestBlePermissions = {
                                             blePermissionLauncher.launch(BlePermissionsHelper.requiredPermissions())

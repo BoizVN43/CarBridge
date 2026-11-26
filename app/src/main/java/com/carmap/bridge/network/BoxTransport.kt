@@ -36,6 +36,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 object BoxNetworkConstants {
     const val TCP_PORT = 48291
@@ -112,6 +113,7 @@ class BoxServerTransport(
     private val boxIdProvider: () -> String,
     private val boxNameProvider: () -> String,
     private val onPacketReceived: suspend (IncomingMapPacket, String) -> Pair<Boolean, String>,
+    private val onFilePinCheck: (pin: String) -> Boolean = { true },
     private val onFileReceived: suspend (fileName: String, mimeType: String, file: File, pin: String, remoteIp: String) -> Pair<Boolean, String> = { _, _, _, _, _ -> false to "Chưa hỗ trợ nhận tệp" }
 ) {
     private var serverSocket: ServerSocket? = null
@@ -270,6 +272,17 @@ class BoxServerTransport(
                 val fileSize = json.optLong("fileSize", -1L)
                 val remoteIp = s.inetAddress?.hostAddress ?: "LAN"
 
+                if (!onFilePinCheck(pin)) {
+                    val err = JSONObject().apply {
+                        put("ok", false)
+                        put("message", "Sai mã PIN ghép nối")
+                    }.toString()
+                    writer.write(err)
+                    writer.newLine()
+                    writer.flush()
+                    return
+                }
+
                 if (fileSize <= 0L || fileSize > 180L * 1024L * 1024L) {
                     val err = JSONObject().apply {
                         put("ok", false)
@@ -409,15 +422,33 @@ class BoxServerTransport(
             if (lock != null && !lock.isHeld) lock.acquire()
         }
     }
+
+    companion object {
+        fun cleanupOldReceivedFiles(context: Context, maxAgeMs: Long = 24L * 3600_000L) {
+            runCatching {
+                val dir = File(context.cacheDir, "received_files")
+                if (!dir.exists()) return
+                val now = System.currentTimeMillis()
+                dir.listFiles()?.forEach { file ->
+                    if (now - file.lastModified() > maxAgeMs) {
+                        file.delete()
+                    }
+                }
+            }
+        }
+    }
 }
 
 class PhoneDiscoveryAndClient(
     private val context: Context,
     private val scope: CoroutineScope,
     private val selfInstanceIdProvider: () -> String = { "" },
+    private val proximityOnly2mProvider: () -> Boolean = { false },
     private val onBoxFound: (DiscoveredBox) -> Unit,
     private val onBleScanStateChanged: (Boolean) -> Unit = {}
 ) {
+    private val discoveryLock = Any()
+    private val discoveryGeneration = AtomicLong(0L)
     private var udpListenJob: Job? = null
     private var udpSocket: DatagramSocket? = null
     private var nsdManager: NsdManager? = null
@@ -428,57 +459,86 @@ class PhoneDiscoveryAndClient(
     private val bleClient = BlePhoneClient(
         context = context,
         onBoxFound = onBoxFound,
-        onScanStateChanged = onBleScanStateChanged
+        onScanStateChanged = onBleScanStateChanged,
+        proximityOnly2mProvider = proximityOnly2mProvider
     )
 
-    fun startDiscovery(enableBle: Boolean = true) {
+    fun hasRecentNearbyBleSighting(maxAgeMs: Long = 12_000L): Boolean =
+        bleClient.hasRecentNearbyBleSighting(maxAgeMs)
+
+    fun nearestBleDistanceMeters(maxAgeMs: Long = 12_000L): Float? =
+        bleClient.nearestBleDistanceMeters(maxAgeMs)
+
+    fun setBleBalancedMode(balanced: Boolean) {
         scope.launch(Dispatchers.IO) {
-            acquireMulticastLock()
-            if (enableBle) {
-                bleClient.startScan()
-            }
-            startNsdDiscovery()
-            sendActiveProbe()
+            bleClient.setBatterySavingScanMode(balanced)
         }
-        if (udpListenJob?.isActive == true) return
-        udpListenJob = scope.launch(Dispatchers.IO) {
-            while (isActive) {
-                runCatching {
-                    val ds = DatagramSocket(null).apply {
-                        reuseAddress = true
-                        broadcast = true
-                        bind(InetSocketAddress(BoxNetworkConstants.UDP_DISCOVERY_PORT))
-                    }
-                    udpSocket = ds
-                    val buf = ByteArray(1024)
-                    while (isActive && !ds.isClosed) {
-                        val dp = DatagramPacket(buf, buf.size)
-                        ds.receive(dp)
-                        val msg = String(dp.data, 0, dp.length, Charsets.UTF_8)
-                        val json = runCatching { JSONObject(msg) }.getOrNull() ?: continue
-                        if (json.optString("type") == "CARMAP_BOX_BEACON") {
-                            val host = dp.address?.hostAddress ?: continue
-                            val boxId = json.optString("id", host)
-                            if (boxId == selfInstanceIdProvider() || LanBroadcastHelper.isLocalDeviceIp(host)) continue
-                            onBoxFound(
-                                DiscoveredBox(
-                                    id = boxId,
-                                    name = json.optString("name", "Android Box"),
-                                    host = host,
-                                    port = json.optInt("port", BoxNetworkConstants.TCP_PORT),
-                                    isLocalDemo = host == "127.0.0.1"
+    }
+
+    fun startDiscovery(enableBle: Boolean = true) {
+        val gen = discoveryGeneration.incrementAndGet()
+        scope.launch(Dispatchers.IO) {
+            if (discoveryGeneration.get() != gen) return@launch
+            acquireMulticastLock()
+            if (enableBle && discoveryGeneration.get() == gen) {
+                bleClient.startScan(balancedMode = false)
+            }
+            if (discoveryGeneration.get() == gen) {
+                startNsdDiscovery()
+                sendActiveProbe()
+            }
+        }
+        synchronized(discoveryLock) {
+            if (udpListenJob?.isActive == true) return
+            udpListenJob = scope.launch(Dispatchers.IO) {
+                while (isActive && discoveryGeneration.get() == gen) {
+                    runCatching {
+                        val ds = DatagramSocket(null).apply {
+                            reuseAddress = true
+                            broadcast = true
+                            bind(InetSocketAddress(BoxNetworkConstants.UDP_DISCOVERY_PORT))
+                        }
+                        synchronized(discoveryLock) {
+                            if (discoveryGeneration.get() != gen) {
+                                runCatching { ds.close() }
+                                return@launch
+                            }
+                            udpSocket = ds
+                        }
+                        val buf = ByteArray(1024)
+                        while (isActive && !ds.isClosed && discoveryGeneration.get() == gen) {
+                            val dp = DatagramPacket(buf, buf.size)
+                            ds.receive(dp)
+                            val msg = String(dp.data, 0, dp.length, Charsets.UTF_8)
+                            val json = runCatching { JSONObject(msg) }.getOrNull() ?: continue
+                            if (json.optString("type") == "CARMAP_BOX_BEACON") {
+                                val host = dp.address?.hostAddress ?: continue
+                                val boxId = json.optString("id", host)
+                                if (boxId == selfInstanceIdProvider() || LanBroadcastHelper.isLocalDeviceIp(host)) continue
+                                onBoxFound(
+                                    DiscoveredBox(
+                                        id = boxId,
+                                        name = json.optString("name", "Android Box"),
+                                        host = host,
+                                        port = json.optInt("port", BoxNetworkConstants.TCP_PORT),
+                                        isLocalDemo = host == "127.0.0.1"
+                                    )
                                 )
-                            )
+                            }
+                        }
+                    }.onFailure {
+                        if (isActive && discoveryGeneration.get() == gen) {
+                            Log.w(BoxNetworkConstants.TAG, "UDP discovery restarting: ${it.message}")
                         }
                     }
-                }.onFailure {
-                    if (isActive) {
-                        Log.w(BoxNetworkConstants.TAG, "UDP discovery restarting: ${it.message}")
+                    synchronized(discoveryLock) {
+                        if (discoveryGeneration.get() == gen) {
+                            runCatching { udpSocket?.close() }
+                            udpSocket = null
+                        }
                     }
+                    if (isActive && discoveryGeneration.get() == gen) delay(1500L)
                 }
-                runCatching { udpSocket?.close() }
-                udpSocket = null
-                if (isActive) delay(1500L)
             }
         }
     }
@@ -574,16 +634,26 @@ class PhoneDiscoveryAndClient(
     }
 
     fun stopDiscovery() {
-        udpListenJob?.cancel()
-        val us = udpSocket
-        val dl = discoveryListener
-        val mgr = nsdManager
-        val lock = multicastLock
-        udpSocket = null
-        discoveryListener = null
-        multicastLock = null
-        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-            runCatching { bleClient.stopScan() }
+        val stopGen = discoveryGeneration.incrementAndGet()
+        val us: DatagramSocket?
+        val dl: NsdManager.DiscoveryListener?
+        val mgr: NsdManager?
+        val lock: WifiManager.MulticastLock?
+        synchronized(discoveryLock) {
+            udpListenJob?.cancel()
+            udpListenJob = null
+            us = udpSocket
+            dl = discoveryListener
+            mgr = nsdManager
+            lock = multicastLock
+            udpSocket = null
+            discoveryListener = null
+            multicastLock = null
+        }
+        scope.launch(Dispatchers.IO) {
+            if (discoveryGeneration.get() == stopGen) {
+                runCatching { bleClient.stopScan() }
+            }
             runCatching { us?.close() }
             runCatching { dl?.let { mgr?.stopServiceDiscovery(it) } }
             runCatching { if (lock?.isHeld == true) lock.release() }

@@ -17,9 +17,12 @@ import com.carmap.bridge.model.SavedPlace
 import com.carmap.bridge.model.SharedTransferRecord
 import com.carmap.bridge.model.ThemeMode
 import com.carmap.bridge.network.BoxNetworkConstants
+import com.carmap.bridge.widget.CarBridgeWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +30,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.abs
 
 @Immutable
 data class BridgeUiState(
@@ -42,6 +46,7 @@ data class BridgeUiState(
     val bleAdvertising: Boolean = false,
     val bleScanning: Boolean = false,
     val preferBleOverLan: Boolean = false,
+    val proximityOnly2m: Boolean = false,
     val autoOpenOnBox: Boolean = true,
     val simulatePreviewOnEmulator: Boolean = false,
     val boxPreferredTarget: MapProvider = MapProvider.AUTO,
@@ -67,39 +72,84 @@ object BridgeRepository {
 
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var appContext: Context? = null
+    private var configPersistJob: Job? = null
     private val boxLastSeenMap = ConcurrentHashMap<String, Long>()
     var deviceInstanceId: String = "cb-local"
         private set
+
+    @Volatile
+    var cachedBoxClipboard: String? = null
+        private set
+
+    fun updateCachedBoxClipboard(text: String?) {
+        val clean = text?.trim()?.takeIf { it.isNotBlank() }
+        if (clean != null) {
+            cachedBoxClipboard = clean
+        }
+    }
 
     fun init(context: Context) {
         if (appContext != null) return
         val app = context.applicationContext
         appContext = app
         deviceInstanceId = AppPreferences.getOrCreateInstanceId(app)
-        val loaded = AppPreferences.loadIntoState(app)
-        _state.value = loaded
-        loaded.pairedBox?.let { pushDirectShareShortcut(app, it) }
+        // Fast synchronous load of lightweight config only (no JSON parsing on Main Thread)
+        val core = AppPreferences.loadFastCoreState(app)
+        _state.value = core
+        core.pairedBox?.let { pushDirectShareShortcut(app, it) }
+
+        // Load heavier JSON collections asynchronously off Main Thread
+        ioScope.launch {
+            val heavy = AppPreferences.loadHeavyCollections(app)
+            _state.update { cur ->
+                cur.copy(
+                    history = if (cur.history.isEmpty()) heavy.history else cur.history,
+                    savedPlaces = if (cur.savedPlaces.isEmpty()) heavy.savedPlaces else cur.savedPlaces,
+                    clipboardHistory = if (cur.clipboardHistory.isEmpty()) heavy.clipboardHistory else cur.clipboardHistory,
+                    parkingPin = cur.parkingPin ?: heavy.parkingPin,
+                    pendingQueueTitle = cur.pendingQueueTitle ?: heavy.pendingQueueTitle
+                )
+            }
+            if (heavy.savedPlaces.isNotEmpty()) {
+                CarBridgeWidgetProvider.requestUpdate(app)
+            }
+        }
     }
 
-    private fun persist() {
+    private fun persistConfig(debounced: Boolean = false) {
+        val ctx = appContext ?: return
+        if (debounced) {
+            configPersistJob?.cancel()
+            configPersistJob = ioScope.launch {
+                delay(350L)
+                AppPreferences.saveConfigOnly(ctx, _state.value)
+            }
+        } else {
+            configPersistJob?.cancel()
+            val snapshot = _state.value
+            ioScope.launch { AppPreferences.saveConfigOnly(ctx, snapshot) }
+        }
+    }
+
+    private fun persistCollections() {
         val ctx = appContext ?: return
         val snapshot = _state.value
-        ioScope.launch { AppPreferences.saveState(ctx, snapshot) }
+        ioScope.launch { AppPreferences.saveCollectionsOnly(ctx, snapshot) }
     }
 
     fun setThemeMode(mode: ThemeMode) {
         _state.update { it.copy(themeMode = mode) }
-        persist()
+        persistConfig()
     }
 
     fun setRole(role: DeviceRole) {
         _state.update { it.copy(role = role, roleConfigured = true) }
-        persist()
+        persistConfig()
     }
 
     fun setAutoStartOnBoot(enabled: Boolean) {
         _state.update { it.copy(autoStartOnBoot = enabled) }
-        persist()
+        persistConfig()
     }
 
     fun setBoxServiceRunning(running: Boolean) {
@@ -134,14 +184,22 @@ object BridgeRepository {
     fun upsertDiscoveredBox(box: DiscoveredBox) {
         if (!box.isLocalDemo && box.id == deviceInstanceId) return
         boxLastSeenMap[boxKey(box)] = System.currentTimeMillis()
-        // Fast path: if an identical box is already in state (only heartbeat timestamp changed),
-        // skip StateFlow emission completely to prevent unnecessary 2-second UI recompositions!
+        // Fast path: if an identical box is already in state (only heartbeat timestamp or tiny RSSI jitter changed),
+        // skip StateFlow emission completely to prevent unnecessary UI recompositions!
         val cur = _state.value
         val existing = cur.discoveredBoxes.firstOrNull {
             it.channel == box.channel && it.host == box.host && it.port == box.port &&
                 it.id == box.id && it.name == box.name && it.bleAddress == box.bleAddress
         }
-        if (existing != null && cur.pairedBox != null) return
+        val distUnchanged = if (existing != null) {
+            val oldD = existing.estimatedDistanceMeters
+            val newD = box.estimatedDistanceMeters
+            (oldD == null && newD == null) ||
+                (oldD != null && newD != null && abs(oldD - newD) < 0.25f)
+        } else {
+            false
+        }
+        if (existing != null && distUnchanged && cur.pairedBox != null) return
 
         val normalizedBox = box.copy(lastSeenMs = 0L)
         _state.update { current ->
@@ -195,18 +253,51 @@ object BridgeRepository {
 
     fun setBleEnabled(enabled: Boolean) {
         _state.update { it.copy(bleEnabled = enabled) }
-        persist()
+        persistConfig()
     }
 
     fun setPreferBleOverLan(preferBle: Boolean) {
         _state.update { it.copy(preferBleOverLan = preferBle) }
-        persist()
+        persistConfig()
+    }
+
+    fun setProximityOnly2m(enabled: Boolean) {
+        _state.update { cur ->
+            val filtered = if (enabled) {
+                cur.discoveredBoxes.filter { box ->
+                    box.isLocalDemo ||
+                        box.id.startsWith("manual-") ||
+                        box.id.startsWith("qr-") ||
+                        (box.estimatedDistanceMeters != null && box.estimatedDistanceMeters <= 2.3f)
+                }
+            } else {
+                cur.discoveredBoxes
+            }
+            val nextPaired = cur.pairedBox?.let { paired ->
+                if (!enabled ||
+                    paired.isLocalDemo ||
+                    paired.id.startsWith("manual-") ||
+                    paired.id.startsWith("qr-") ||
+                    filtered.any { it.host == paired.host && it.channel == paired.channel }
+                ) {
+                    paired
+                } else {
+                    filtered.firstOrNull()
+                }
+            }
+            cur.copy(
+                proximityOnly2m = enabled,
+                discoveredBoxes = filtered,
+                pairedBox = nextPaired
+            )
+        }
+        persistConfig()
     }
 
     fun selectPairedBox(context: Context, box: DiscoveredBox) {
         _state.update { it.copy(pairedBox = box, lastStatusBanner = "Đã chọn Box: ${box.name}") }
         pushDirectShareShortcut(context, box)
-        persist()
+        persistConfig()
     }
 
     fun addManualBox(context: Context, host: String, name: String) {
@@ -238,7 +329,10 @@ object BridgeRepository {
                 phoneTargetOverride = phoneTargetOverride ?: it.phoneTargetOverride
             )
         }
-        persist()
+        val isTypingEdit = (boxName != null || pin != null) &&
+            autoOpen == null && simulatePreview == null &&
+            boxPreferredTarget == null && phoneTargetOverride == null
+        persistConfig(debounced = isTypingEdit)
     }
 
     fun setStatusBanner(msg: String?) {
@@ -265,24 +359,29 @@ object BridgeRepository {
         _state.update { cur ->
             cur.copy(savedPlaces = (cur.savedPlaces + item).take(12))
         }
-        persist()
+        persistCollections()
+        appContext?.let { CarBridgeWidgetProvider.requestUpdate(it) }
     }
 
     fun removeSavedPlace(id: String) {
         _state.update { cur ->
             cur.copy(savedPlaces = cur.savedPlaces.filterNot { it.id == id })
         }
-        persist()
+        persistCollections()
+        appContext?.let { CarBridgeWidgetProvider.requestUpdate(it) }
     }
 
     fun clearHistory() {
         _state.update { it.copy(history = emptyList()) }
-        persist()
+        persistCollections()
     }
 
     fun recordClipboardItem(text: String, isReceivedOnBox: Boolean = false) {
         val clean = text.trim()
         if (clean.isBlank()) return
+        if (isReceivedOnBox) {
+            cachedBoxClipboard = clean
+        }
         _state.update { cur ->
             val updated = (listOf(clean) + cur.clipboardHistory.filterNot { it == clean }).take(8)
             cur.copy(
@@ -290,17 +389,17 @@ object BridgeRepository {
                 lastReceivedClipboard = if (isReceivedOnBox) clean else cur.lastReceivedClipboard
             )
         }
-        persist()
+        persistCollections()
     }
 
     fun clearClipboardHistory() {
         _state.update { it.copy(clipboardHistory = emptyList(), lastReceivedClipboard = null) }
-        persist()
+        persistCollections()
     }
 
     fun setParkingPin(pin: ParkingPin?) {
         _state.update { it.copy(parkingPin = pin) }
-        persist()
+        persistCollections()
     }
 
     fun setFileTransferProgress(progress: Float?, label: String? = null) {
@@ -330,7 +429,7 @@ object BridgeRepository {
         _state.update {
             it.copy(history = (listOf(record) + it.history).take(40))
         }
-        persist()
+        persistCollections()
     }
 
     fun findBoxByShortcutId(shortcutId: String?): DiscoveredBox? {

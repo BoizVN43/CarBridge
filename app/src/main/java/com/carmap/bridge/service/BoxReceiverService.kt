@@ -53,6 +53,9 @@ class BoxReceiverService : Service() {
     private var lanTransport: BoxServerTransport? = null
     private var bleTransport: BleBoxServerTransport? = null
     private var wifiNetworkCallback: ConnectivityManager.NetworkCallback? = null
+    private var receivedCount: Int = 0
+    private var lastReceivedSummary: String? = null
+    private var bleActiveNow: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
@@ -87,6 +90,10 @@ class BoxReceiverService : Service() {
                 val label = if (remoteIp == "127.0.0.1") "LAN Loopback (<10ms)" else "LAN Socket"
                 handleIncomingPacket(packet, remoteIp, label)
             },
+            onFilePinCheck = { pin ->
+                val expected = BridgeRepository.state.value.pairingPin
+                expected.isBlank() || pin == expected
+            },
             onFileReceived = { fileName, mimeType, file, pin, remoteIp ->
                 handleIncomingFile(fileName, mimeType, file, pin, remoteIp)
             }
@@ -97,7 +104,11 @@ class BoxReceiverService : Service() {
             context = this,
             scope = serviceScope,
             boxNameProvider = { BridgeRepository.state.value.boxName },
-            onStatusChanged = { active -> BridgeRepository.setBleAdvertising(active) },
+            onStatusChanged = { active ->
+                bleActiveNow = active
+                BridgeRepository.setBleAdvertising(active)
+                updateNotificationStatus()
+            },
             onPacketReceived = { packet, remoteBle ->
                 handleIncomingPacket(packet, remoteBle, "Bluetooth LE GATT")
             }
@@ -105,6 +116,7 @@ class BoxReceiverService : Service() {
         bleTransport = ble
 
         serviceScope.launch(Dispatchers.IO) {
+            BoxServerTransport.cleanupOldReceivedFiles(this@BoxReceiverService)
             lan.start()
             if (BridgeRepository.state.value.bleEnabled) {
                 ble.start()
@@ -188,6 +200,7 @@ class BoxReceiverService : Service() {
                     status = "Đã chép vào Clipboard Box"
                 )
                 BridgeRepository.setStatusBanner("Box đã chép Clipboard (${text.length} ký tự)")
+                noteReceivedItem("Clipboard: ${text.take(28)}")
                 return true to "Đã chép vào Clipboard của Box"
             }
 
@@ -196,7 +209,9 @@ class BoxReceiverService : Service() {
                     val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                     cm?.primaryClip?.takeIf { it.itemCount > 0 }
                         ?.getItemAt(0)?.coerceToText(this@BoxReceiverService)?.toString()?.trim()
-                }.orEmpty().ifBlank { state.lastReceivedClipboard.orEmpty() }
+                }.orEmpty()
+                    .ifBlank { BridgeRepository.cachedBoxClipboard.orEmpty() }
+                    .ifBlank { state.lastReceivedClipboard.orEmpty() }
                 if (clipText.isBlank()) {
                     return false to "Clipboard trên Box đang trống"
                 }
@@ -225,6 +240,18 @@ class BoxReceiverService : Service() {
         }
 
         val parsed = MapLinkResolver.resolveAndParse(packet.rawText, packet.resolvedUrl)
+        // If a short redirect expanded to a non-map Media or Web URL, route accordingly
+        if (parsed.sourceProvider == MapProvider.UNKNOWN &&
+            parsed.primaryLat == null &&
+            parsed.resolvedUrl.startsWith("http", ignoreCase = true)
+        ) {
+            if (MediaLinkHelper.extractMediaLink(parsed.resolvedUrl) != null) {
+                return handleMediaLink(packet.copy(resolvedUrl = parsed.resolvedUrl), remoteEndpoint, transportUsed)
+            }
+            if (MediaLinkHelper.extractGenericWebLink(parsed.resolvedUrl, allowShortRedirect = true) != null) {
+                return handleWebLink(packet.copy(resolvedUrl = parsed.resolvedUrl), remoteEndpoint, transportUsed)
+            }
+        }
         val targetPref = if (packet.preferredTarget != MapProvider.AUTO) {
             packet.preferredTarget
         } else {
@@ -261,6 +288,7 @@ class BoxReceiverService : Service() {
             status = if (openedReal) "Đã mở ${spec.effectiveProvider.displayName}" else "Đã bật HUD điều hướng Box"
         )
         BridgeRepository.setStatusBanner("Box vừa nhận ($transportUsed): ${parsed.title}")
+        noteReceivedItem(parsed.title)
 
         return true to "Box đã nhận & mở ${spec.effectiveProvider.displayName}"
     }
@@ -307,6 +335,7 @@ class BoxReceiverService : Service() {
             status = if (opened) "Đã mở $serviceName" else "Đã nhận link $serviceName"
         )
         BridgeRepository.setStatusBanner("Box vừa mở $serviceName")
+        noteReceivedItem(parsed.title)
         return true to "Box đã mở $serviceName"
     }
 
@@ -338,6 +367,7 @@ class BoxReceiverService : Service() {
             status = if (opened) "Đã mở trình duyệt trên Box" else "Đã nhận link web"
         )
         BridgeRepository.setStatusBanner("Box đã mở trang web: ${parsed.title}")
+        noteReceivedItem(parsed.title)
         return true to "Box đã mở trang web"
     }
 
@@ -401,6 +431,7 @@ class BoxReceiverService : Service() {
             }
         )
         BridgeRepository.setStatusBanner("Box đã nhận tệp: $fileName")
+        noteReceivedItem(fileName)
         return true to if (isApk) "Box đã nhận APK $fileName" else "Box đã nhận $fileName"
     }
 
@@ -443,6 +474,25 @@ class BoxReceiverService : Service() {
             NotificationManager.IMPORTANCE_LOW
         )
         mgr.createNotificationChannel(channel)
+    }
+
+    private fun noteReceivedItem(title: String) {
+        receivedCount += 1
+        lastReceivedSummary = title.take(36)
+        updateNotificationStatus()
+    }
+
+    private fun updateNotificationStatus() {
+        runCatching {
+            val channelLabel = if (bleActiveNow) "LAN + BLE" else "LAN"
+            val text = if (receivedCount > 0 && !lastReceivedSummary.isNullOrBlank()) {
+                "$channelLabel · Đã nhận $receivedCount mục · Gần nhất: $lastReceivedSummary"
+            } else {
+                "$channelLabel · Đang chờ link bản đồ từ điện thoại..."
+            }
+            val mgr = getSystemService(NotificationManager::class.java)
+            mgr?.notify(NOTIF_ID, buildNotification(text))
+        }
     }
 
     private fun buildNotification(text: String): Notification {

@@ -469,13 +469,16 @@ private fun HeroBoxTargetCard(
                         }
                         Spacer(Modifier.width(9.dp))
                         Column {
+                            val proximityTag = if (state.proximityOnly2m) " · GẦN ≤2M" else ""
+                            val distTag = activeBox?.estimatedDistanceMeters?.let { " · ~${it}m" }.orEmpty()
                             Text(
-                                text = state.lastPingSummary?.let { "ANDROID BOX · $it" } ?: "ANDROID BOX ĐÍCH",
+                                text = (state.lastPingSummary?.let { "ANDROID BOX · $it" } ?: "ANDROID BOX ĐÍCH") + distTag + proximityTag,
                                 fontSize = adaptive.sp(10f),
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = adaptive.sp(0.6f),
                                 color = Color(0xFF34D399),
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = activeBox?.name ?: "Chưa chọn Box",
@@ -545,8 +548,9 @@ private fun HeroBoxTargetCard(
                                         modifier = Modifier.size(12.dp)
                                     )
                                     Spacer(Modifier.width(4.dp))
+                                    val distSuffix = box.estimatedDistanceMeters?.let { " · ~${it}m" }.orEmpty()
                                     Text(
-                                        text = if (box.channel == TransportChannel.BLE) "BLE · ${box.host}" else "LAN · ${box.host}",
+                                        text = if (box.channel == TransportChannel.BLE) "BLE$distSuffix · ${box.host}" else "LAN$distSuffix · ${box.host}",
                                         fontSize = adaptive.sp(11f),
                                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                         color = if (selected) Color(0xFF34D399) else Color(0xFFCBD5E1)

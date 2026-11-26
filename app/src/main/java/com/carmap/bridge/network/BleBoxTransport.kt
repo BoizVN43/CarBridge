@@ -46,6 +46,20 @@ import java.io.ByteArrayOutputStream
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.roundToInt
+
+object BleProximityHelper {
+    const val PROXIMITY_2M_RSSI_THRESHOLD = -68
+    const val PROXIMITY_2M_KEEP_RSSI_THRESHOLD = -72
+
+    fun estimateDistanceMeters(rssiDbm: Int, txPowerAt1m: Int = -59): Float {
+        if (rssiDbm >= 0) return 0.5f
+        val exponent = (txPowerAt1m - rssiDbm) / (10.0 * 2.2)
+        val raw = 10.0.pow(exponent).toFloat().coerceIn(0.2f, 15.0f)
+        return (raw * 10f).roundToInt() / 10f
+    }
+}
 
 object BleConstants {
     val SERVICE_UUID: UUID = UUID.fromString("c4a90001-7b5d-412c-ab62-3766174fd73b")
@@ -148,6 +162,7 @@ class BleBoxServerTransport(
     }
 
     @SuppressLint("MissingPermission")
+    @Synchronized
     fun start() {
         if (!BlePermissionsHelper.hasConnectPermission(context) ||
             !BlePermissionsHelper.hasAdvertisePermission(context)
@@ -160,6 +175,11 @@ class BleBoxServerTransport(
         if (adapter == null || !adapter.isEnabled) {
             onStatusChanged(false)
             return
+        }
+
+        // Guard against duplicate start() calls leaking BluetoothGattServer / ADVERTISE_FAILED_ALREADY_STARTED
+        if (gattServer != null || advertiseCallback != null) {
+            stop()
         }
 
         runCatching {
@@ -249,6 +269,7 @@ class BleBoxServerTransport(
     }
 
     @SuppressLint("MissingPermission")
+    @Synchronized
     fun stop() {
         isAdvertising = false
         onStatusChanged(false)
@@ -319,8 +340,29 @@ class BleBoxServerTransport(
             }
 
             val buf = rxBuffers.getOrPut(device.address) { ByteArrayOutputStream() }
-            if (buf.size() + value.size > MAX_BLE_BUFFER_BYTES) {
-                buf.reset()
+            var overflowed = false
+            val line: String? = synchronized(buf) {
+                if (buf.size() + value.size > MAX_BLE_BUFFER_BYTES) {
+                    buf.reset()
+                    overflowed = true
+                    null
+                } else {
+                    buf.write(value)
+                    val currentBytes = buf.toByteArray()
+                    val newlineIdx = currentBytes.indexOf('\n'.code.toByte())
+                    if (newlineIdx < 0) {
+                        null
+                    } else {
+                        val extracted = String(currentBytes, 0, newlineIdx, Charsets.UTF_8)
+                        buf.reset()
+                        if (newlineIdx + 1 < currentBytes.size) {
+                            buf.write(currentBytes, newlineIdx + 1, currentBytes.size - newlineIdx - 1)
+                        }
+                        extracted
+                    }
+                }
+            }
+            if (overflowed) {
                 scope.launch(Dispatchers.IO) {
                     val errResp = JSONObject().apply {
                         put("ok", false)
@@ -330,16 +372,7 @@ class BleBoxServerTransport(
                 }
                 return
             }
-            buf.write(value)
-            val currentBytes = buf.toByteArray()
-            val newlineIdx = currentBytes.indexOf('\n'.code.toByte())
-            if (newlineIdx < 0) return
-
-            val line = String(currentBytes, 0, newlineIdx, Charsets.UTF_8)
-            buf.reset()
-            if (newlineIdx + 1 < currentBytes.size) {
-                buf.write(currentBytes, newlineIdx + 1, currentBytes.size - newlineIdx - 1)
-            }
+            if (line == null) return
 
             scope.launch(Dispatchers.IO) {
                 val (ok, message) = runCatching {
@@ -406,16 +439,48 @@ class BleBoxServerTransport(
 class BlePhoneClient(
     private val context: Context,
     private val onBoxFound: (DiscoveredBox) -> Unit,
-    private val onScanStateChanged: (Boolean) -> Unit
+    private val onScanStateChanged: (Boolean) -> Unit,
+    private val proximityOnly2mProvider: () -> Boolean = { false }
 ) {
     private var scanner: BluetoothLeScanner? = null
     private var scanCallback: ScanCallback? = null
+    private var currentScanMode: Int = ScanSettings.SCAN_MODE_LOW_LATENCY
+    private val emaRssiMap = ConcurrentHashMap<String, Double>()
+    private val nearbySeenAtMap = ConcurrentHashMap<String, Long>()
+    private val nearbyDistMap = ConcurrentHashMap<String, Float>()
     var isScanning: Boolean = false
         private set
 
+    fun hasRecentNearbyBleSighting(maxAgeMs: Long = 12_000L): Boolean {
+        val cutoff = System.currentTimeMillis() - maxAgeMs
+        return nearbySeenAtMap.values.any { it >= cutoff }
+    }
+
+    fun nearestBleDistanceMeters(maxAgeMs: Long = 12_000L): Float? {
+        val cutoff = System.currentTimeMillis() - maxAgeMs
+        return nearbySeenAtMap.entries
+            .filter { it.value >= cutoff }
+            .mapNotNull { nearbyDistMap[it.key] }
+            .minOrNull()
+    }
+
+    @Synchronized
+    fun setBatterySavingScanMode(balanced: Boolean) {
+        if (!isScanning) return
+        val desired = if (balanced) ScanSettings.SCAN_MODE_BALANCED else ScanSettings.SCAN_MODE_LOW_LATENCY
+        if (desired == currentScanMode) return
+        stopScan()
+        startScan(balancedMode = balanced)
+    }
+
     @SuppressLint("MissingPermission")
-    fun startScan() {
-        if (isScanning) return
+    @Synchronized
+    fun startScan(balancedMode: Boolean = false) {
+        val desiredMode = if (balancedMode) ScanSettings.SCAN_MODE_BALANCED else ScanSettings.SCAN_MODE_LOW_LATENCY
+        if (isScanning && currentScanMode == desiredMode) return
+        if (isScanning) {
+            stopScan()
+        }
         if (!BlePermissionsHelper.hasScanPermission(context)) {
             onScanStateChanged(false)
             return
@@ -434,12 +499,38 @@ class BlePhoneClient(
                 .build()
         )
         val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setScanMode(desiredMode)
             .build()
 
         val cb = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val device = result.device ?: return
+                val addr = device.address
+                val rawRssi = result.rssi
+                val now = System.currentTimeMillis()
+                val prevEma = emaRssiMap[addr]
+                val smoothedRssi = if (prevEma == null) {
+                    rawRssi.toDouble()
+                } else {
+                    prevEma * 0.65 + rawRssi * 0.35
+                }
+                emaRssiMap[addr] = smoothedRssi
+                val rssiInt = smoothedRssi.roundToInt()
+                val distMeters = BleProximityHelper.estimateDistanceMeters(rssiInt)
+
+                val wasNearbyRecently = (nearbySeenAtMap[addr] ?: 0L) >= now - 10_000L
+                val isWithin2m = rssiInt >= BleProximityHelper.PROXIMITY_2M_RSSI_THRESHOLD ||
+                    (wasNearbyRecently && rssiInt >= BleProximityHelper.PROXIMITY_2M_KEEP_RSSI_THRESHOLD)
+
+                if (isWithin2m) {
+                    nearbySeenAtMap[addr] = now
+                    nearbyDistMap[addr] = distMeters
+                }
+
+                if (proximityOnly2mProvider() && !isWithin2m) {
+                    return
+                }
+
                 val svcName = result.scanRecord
                     ?.getServiceData(ParcelUuid(BleConstants.SERVICE_UUID))
                     ?.toString(Charsets.UTF_8)
@@ -450,12 +541,14 @@ class BlePhoneClient(
                     ?: if (BlePermissionsHelper.hasConnectPermission(context)) device.name else null
                 onBoxFound(
                     DiscoveredBox(
-                        id = "ble-${device.address}",
+                        id = "ble-$addr",
                         name = "${devName ?: "Android Box"} (BLE)",
-                        host = device.address,
+                        host = addr,
                         port = 0,
                         channel = TransportChannel.BLE,
-                        bleAddress = device.address
+                        bleAddress = addr,
+                        rssiDbm = rssiInt,
+                        estimatedDistanceMeters = distMeters
                     )
                 )
             }
@@ -469,6 +562,7 @@ class BlePhoneClient(
 
         scanner = bleScanner
         scanCallback = cb
+        currentScanMode = desiredMode
         runCatching {
             bleScanner.startScan(filters, settings, cb)
             isScanning = true
@@ -480,6 +574,7 @@ class BlePhoneClient(
     }
 
     @SuppressLint("MissingPermission")
+    @Synchronized
     fun stopScan() {
         if (!isScanning) return
         isScanning = false
