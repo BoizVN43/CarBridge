@@ -223,30 +223,37 @@ private fun CarBoxNavigationHud(
             contentAlignment = Alignment.TopCenter
         ) {
             if (adaptive.isTwoColumn) {
-                Row(
+                Column(
                     modifier = Modifier
                         .widthIn(max = 1120.dp)
                         .fillMaxSize()
                         .padding(adaptive.screenPadding),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Column(
+                    HudHeaderRow(senderName, remoteIp, accents, onClose)
+                    Row(
                         modifier = Modifier
-                            .weight(1.1f)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        HudHeaderRow(senderName, remoteIp, accents, onClose)
-                        HudRouteSummaryCard(title, kindLabel, sourceName, targetName, coords, origin, destination, waypoints, accents)
-                    }
-                    Column(
-                        modifier = Modifier
-                            .weight(0.95f)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        HudIntentInfoCard(isInstalled, targetName, intentUri, accents)
-                        HudActionButtons(targetName, onLaunchNative, onOpenBrowserFallback, onClose)
+                        Column(
+                            modifier = Modifier
+                                .weight(1.1f)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            HudRouteSummaryCard(title, kindLabel, sourceName, targetName, coords, origin, destination, waypoints, accents)
+                        }
+                        Column(
+                            modifier = Modifier
+                                .weight(0.95f)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            HudIntentInfoCard(isInstalled, targetName, accents)
+                            HudActionButtons(targetName, onLaunchNative, onOpenBrowserFallback, onClose)
+                        }
                     }
                 }
             } else {
@@ -254,12 +261,12 @@ private fun CarBoxNavigationHud(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
-                        .padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                        .padding(adaptive.screenPadding),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     HudHeaderRow(senderName, remoteIp, accents, onClose)
                     HudRouteSummaryCard(title, kindLabel, sourceName, targetName, coords, origin, destination, waypoints, accents)
-                    HudIntentInfoCard(isInstalled, targetName, intentUri, accents)
+                    HudIntentInfoCard(isInstalled, targetName, accents)
                     HudActionButtons(targetName, onLaunchNative, onOpenBrowserFallback, onClose)
                 }
             }
@@ -394,7 +401,6 @@ private fun HudRouteSummaryCard(
 private fun HudIntentInfoCard(
     isInstalled: Boolean,
     targetName: String,
-    intentUri: String,
     accents: com.carmap.bridge.ui.theme.CockpitAccents
 ) {
     Card(
@@ -402,24 +408,17 @@ private fun HudIntentInfoCard(
         shape = RoundedCornerShape(18.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(
+        Row(
             modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = accents.emerald, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    if (isInstalled) "Đã sẵn sàng mở $targetName" else "Xem trước điều hướng ($targetName chưa cài trên máy)",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.labelLarge
-                )
-            }
+            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = accents.emerald, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
             Text(
-                intentUri,
-                color = accents.cyan,
+                if (isInstalled) "Đã sẵn sàng mở dẫn đường trên $targetName" else "$targetName chưa cài trên máy — hãy mở bằng trình duyệt hoặc cài $targetName",
+                color = MaterialTheme.colorScheme.onSurface,
                 style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace
+                fontWeight = FontWeight.SemiBold
             )
         }
     }

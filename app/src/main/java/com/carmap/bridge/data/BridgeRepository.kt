@@ -28,12 +28,6 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-data class SampleMapLink(
-    val label: String,
-    val subtitle: String,
-    val rawText: String
-)
-
 @Immutable
 data class BridgeUiState(
     val themeMode: ThemeMode = ThemeMode.DARK,
@@ -76,34 +70,6 @@ object BridgeRepository {
     private val boxLastSeenMap = ConcurrentHashMap<String, Long>()
     var deviceInstanceId: String = "cb-local"
         private set
-
-    val sampleLinks = listOf(
-        SampleMapLink(
-            label = "GMaps · Địa điểm",
-            subtitle = "Nhà riêng (51 Ỷ Lan Nguyên Phi)",
-            rawText = "Nhà riêng (51 Ỷ Lan Nguyên Phi)\nhttps://maps.google.com/?q=16.038921,108.218543"
-        ),
-        SampleMapLink(
-            label = "GMaps · Lộ trình",
-            subtitle = "Đà Nẵng → Cầu Rồng → Bà Nà Hills",
-            rawText = "https://www.google.com/maps/dir/16.047079,108.206230/C%E1%BA%A7u+R%E1%BB%93ng,+%C4%90%C3%A0+N%E1%BA%B5ng/B%C3%A0+N%C3%A0+Hills/@16.02,108.12,12z"
-        ),
-        SampleMapLink(
-            label = "Waze",
-            subtitle = "Sân bay Tân Sơn Nhất",
-            rawText = "https://waze.com/ul?ll=10.818463,106.658825&navigate=yes"
-        ),
-        SampleMapLink(
-            label = "Vietmap",
-            subtitle = "Hầm Thủ Thiêm, TP.HCM",
-            rawText = "https://maps.vietmap.vn/?lat=10.771742&lng=106.709412&q=H%E1%BA%A7m%20Th%E1%BB%A7%20Thi%C3%AAm"
-        ),
-        SampleMapLink(
-            label = "Tọa độ",
-            subtitle = "Hồ Hoàn Kiếm, Hà Nội",
-            rawText = "21.028511, 105.854444"
-        )
-    )
 
     fun init(context: Context) {
         if (appContext != null) return

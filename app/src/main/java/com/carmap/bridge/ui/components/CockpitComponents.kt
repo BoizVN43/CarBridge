@@ -148,23 +148,38 @@ fun SettingsActionRow(
     trailingText: String? = null,
     trailingHighlight: Boolean = false,
     trailingIcon: ImageVector = Icons.Rounded.ChevronRight,
-    onClick: () -> Unit
+    onClick: (() -> Unit)? = null
 ) {
     val accents = LocalCockpitAccents.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .clickable { onClick() }
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         SettingsIconCircle(icon, tint, bg)
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-            Text(subtitle, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = title,
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+            Text(
+                text = subtitle,
+                fontSize = 11.5.sp,
+                lineHeight = 15.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
         }
+        Spacer(Modifier.width(10.dp))
         if (trailingText != null) {
             Surface(
                 shape = RoundedCornerShape(999.dp),
@@ -175,10 +190,11 @@ fun SettingsActionRow(
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (trailingHighlight) accents.emerald else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                 )
             }
-        } else {
+        } else if (onClick != null) {
             Icon(
                 imageVector = trailingIcon,
                 contentDescription = null,
@@ -209,7 +225,7 @@ fun CockpitFloatingNavBar(
         modifier = modifier
             .widthIn(max = if (tabs.size <= 2) 300.dp else 440.dp)
             .fillMaxWidth()
-            .height(if (adaptive.isLandscape) 50.dp else 56.dp)
+            .height(if (adaptive.isLandscape) 54.dp else 58.dp)
             .shadow(
                 elevation = if (accents.isDark) 14.dp else 10.dp,
                 shape = RoundedCornerShape(999.dp),
@@ -223,7 +239,7 @@ fun CockpitFloatingNavBar(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 6.dp, vertical = 6.dp)
+                .padding(horizontal = 5.dp, vertical = 4.dp)
         ) {
             val slotWidth = maxWidth / tabs.size
             val pillOffset by animateDpAsState(
@@ -274,7 +290,7 @@ fun CockpitFloatingNavBar(
                                 imageVector = tab.icon,
                                 contentDescription = tab.label,
                                 tint = tint,
-                                modifier = Modifier.size(20.dp)
+                                modifier = Modifier.size(if (adaptive.isLandscape) 18.dp else 20.dp)
                             )
                             if (idx == tabs.lastIndex && settingsHasBadge) {
                                 Box(

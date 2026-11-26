@@ -83,6 +83,7 @@ fun SettingsScreen(
     state: BridgeUiState,
     canDrawOverlays: Boolean,
     isBatteryIgnored: Boolean,
+    hasNotificationPerm: Boolean,
     installedMaps: Map<MapProvider, Boolean>,
     bleStatus: BleStatus,
     availableUpdate: RemoteReleaseInfo?,
@@ -101,15 +102,6 @@ fun SettingsScreen(
     var manualIp by remember { mutableStateOf("") }
     val installedVersion = remember { AppUpdater.getInstalledVersion(context) }
     val isPhone = state.role == DeviceRole.PHONE_SENDER
-
-    val hasNotificationPerm = remember(state.boxServiceRunning) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-                PackageManager.PERMISSION_GRANTED
-        } else {
-            true
-        }
-    }
 
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -174,8 +166,10 @@ fun SettingsScreen(
                         if (isPhone) {
                             PhonePermissionsCard(
                                 bleStatus = bleStatus,
+                                hasNotificationPerm = hasNotificationPerm,
                                 accents = accents,
-                                onRequestBlePermissions = onRequestBlePermissions
+                                onRequestBlePermissions = onRequestBlePermissions,
+                                onRequestNotificationPermission = onRequestNotificationPermission
                             )
                             AppearanceCard(state, adaptive)
                         } else {
@@ -236,8 +230,10 @@ fun SettingsScreen(
                     item {
                         PhonePermissionsCard(
                             bleStatus = bleStatus,
+                            hasNotificationPerm = hasNotificationPerm,
                             accents = accents,
-                            onRequestBlePermissions = onRequestBlePermissions
+                            onRequestBlePermissions = onRequestBlePermissions,
+                            onRequestNotificationPermission = onRequestNotificationPermission
                         )
                     }
                 } else {
@@ -316,7 +312,7 @@ private fun OtaUpdateCard(
             title = if (availableUpdate != null) {
                 "Có bản mới v${availableUpdate.versionName}"
             } else {
-                "Kiểm tra cập nhật trực tuyến"
+                "Cập nhật trực tuyến"
             },
             subtitle = if (availableUpdate != null) {
                 "Nhấn để tải và cài đè từ GitHub Releases"
@@ -439,14 +435,15 @@ private fun PhoneConnectionSettingsCard(
             OutlinedTextField(
                 value = manualIp,
                 onValueChange = onManualIpChange,
-                label = { Text("IP Box (tùy chọn)") },
-                placeholder = { Text("VD: 192.168.1.20") },
+                placeholder = { Text("IP Box (VD: 192.168.1.20)") },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.weight(1f)
             )
             Button(
                 onClick = onPairManual,
+                enabled = manualIp.isNotBlank(),
+                modifier = Modifier.height(52.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF10B981),
@@ -518,10 +515,12 @@ private fun PhoneConnectionSettingsCard(
 @Composable
 private fun PhonePermissionsCard(
     bleStatus: BleStatus,
+    hasNotificationPerm: Boolean,
     accents: CockpitAccents,
-    onRequestBlePermissions: () -> Unit
+    onRequestBlePermissions: () -> Unit,
+    onRequestNotificationPermission: () -> Unit
 ) {
-    SettingsGroupCard(title = "QUYỀN KẾT NỐI") {
+    SettingsGroupCard(title = "QUYỀN KẾT NỐI & THÔNG BÁO") {
         SettingsActionRow(
             icon = Icons.Rounded.Bluetooth,
             tint = if (bleStatus.permissionsGranted && bleStatus.hardwareSupported) accents.emerald else accents.amber,
@@ -537,6 +536,19 @@ private fun PhonePermissionsCard(
             trailingHighlight = bleStatus.permissionsGranted && bleStatus.hardwareSupported,
             onClick = onRequestBlePermissions
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            SettingsDivider()
+            SettingsActionRow(
+                icon = Icons.Rounded.NotificationsActive,
+                tint = if (hasNotificationPerm) accents.emerald else accents.amber,
+                bg = if (hasNotificationPerm) accents.emeraldContainer else accents.amberContainer,
+                title = "Thông báo OTA & kết nối Box",
+                subtitle = "Báo khi có bản cập nhật mới hoặc khi kết nối Box",
+                trailingText = if (hasNotificationPerm) "Đã bật" else "Cấp quyền",
+                trailingHighlight = hasNotificationPerm,
+                onClick = onRequestNotificationPermission
+            )
+        }
     }
 }
 
@@ -547,23 +559,27 @@ private fun BoxIdentitySettingsCard(
     onToggleBle: (Boolean) -> Unit
 ) {
     SettingsGroupCard(title = "CẤU HÌNH ANDROID BOX") {
-        OutlinedTextField(
-            value = state.boxName,
-            onValueChange = { BridgeRepository.updateSettings(boxName = it) },
-            label = { Text("Tên Android Box trên xe") },
-            singleLine = true,
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = state.pairingPin,
-            onValueChange = { BridgeRepository.updateSettings(pin = it.take(6)) },
-            label = { Text("Mã PIN ghép nối nhanh") },
-            singleLine = true,
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth()
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = state.boxName,
+                onValueChange = { BridgeRepository.updateSettings(boxName = it) },
+                label = { Text("Tên Android Box") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.weight(1.65f)
+            )
+            OutlinedTextField(
+                value = state.pairingPin,
+                onValueChange = { BridgeRepository.updateSettings(pin = it.take(6)) },
+                label = { Text("PIN") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.weight(0.55f)
+            )
+        }
         SettingsDivider()
         var showBoxQr by remember { mutableStateOf(false) }
         val accents = LocalCockpitAccents.current
@@ -627,14 +643,6 @@ private fun AutoLaunchSettingsCard(
             checked = state.autoOpenOnBox,
             adaptive = adaptive,
             onCheckedChange = { BridgeRepository.updateSettings(autoOpen = it) }
-        )
-        SettingsDivider()
-        SettingsToggleRow(
-            title = "Màn hình xem trước trên xe",
-            subtitle = "Tắt để nhảy thẳng vào Google Maps / Waze / Vietmap",
-            checked = state.simulatePreviewOnEmulator,
-            adaptive = adaptive,
-            onCheckedChange = { BridgeRepository.updateSettings(simulatePreview = it) }
         )
         SettingsDivider()
 
@@ -718,17 +726,19 @@ private fun BoxPermissionsAndAppsCard(
             trailingHighlight = false,
             onClick = { com.carmap.bridge.util.OemAutoStartHelper.openAutoStartSettings(ctx) }
         )
-        SettingsDivider()
-        SettingsActionRow(
-            icon = Icons.Rounded.NotificationsActive,
-            tint = if (hasNotificationPerm) accents.emerald else accents.coral,
-            bg = if (hasNotificationPerm) accents.emeraldContainer else accents.coralContainer,
-            title = "Thông báo dịch vụ nền",
-            subtitle = "Giữ Box Receiver hoạt động liên tục",
-            trailingText = if (hasNotificationPerm) "Đã bật" else "Xin quyền",
-            trailingHighlight = hasNotificationPerm,
-            onClick = onRequestNotificationPermission
-        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            SettingsDivider()
+            SettingsActionRow(
+                icon = Icons.Rounded.NotificationsActive,
+                tint = if (hasNotificationPerm) accents.emerald else accents.coral,
+                bg = if (hasNotificationPerm) accents.emeraldContainer else accents.coralContainer,
+                title = "Thông báo dịch vụ nền",
+                subtitle = "Giữ Box Receiver hoạt động liên tục",
+                trailingText = if (hasNotificationPerm) "Đã bật" else "Xin quyền",
+                trailingHighlight = hasNotificationPerm,
+                onClick = onRequestNotificationPermission
+            )
+        }
         SettingsDivider()
         SettingsActionRow(
             icon = Icons.Rounded.Map,
@@ -740,7 +750,7 @@ private fun BoxPermissionsAndAppsCard(
             },
             trailingText = "${installedMaps.count { it.value }}/3 app",
             trailingHighlight = installedMaps.any { it.value },
-            onClick = {}
+            onClick = null
         )
         SettingsDivider()
         SettingsActionRow(

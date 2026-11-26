@@ -80,9 +80,12 @@ import java.io.File
 
 class MainActivity : ComponentActivity() {
 
+    private var onNotifPermResult: ((Boolean) -> Unit)? = null
     private val notifPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { }
+    ) { granted ->
+        onNotifPermResult?.invoke(granted)
+    }
 
     private var onBlePermResult: (() -> Unit)? = null
     private val blePermissionLauncher = registerForActivityResult(
@@ -250,6 +253,16 @@ class MainActivity : ComponentActivity() {
                         ?.isIgnoringBatteryOptimizations(packageName) == true
                 )
             }
+            var hasNotificationPerm by remember {
+                mutableStateOf(
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+                            PackageManager.PERMISSION_GRANTED
+                    } else true
+                )
+            }
+
+            onNotifPermResult = { granted -> hasNotificationPerm = granted }
 
             onBlePermResult = {
                 CarBridgeConnectionManager.refreshBle(BridgeRepository.state.value.bleEnabled)
@@ -278,6 +291,10 @@ class MainActivity : ComponentActivity() {
                         canDrawOverlays = Settings.canDrawOverlays(this@MainActivity)
                         isBatteryIgnored = (getSystemService(Context.POWER_SERVICE) as? PowerManager)
                             ?.isIgnoringBatteryOptimizations(packageName) == true
+                        hasNotificationPerm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) ==
+                                PackageManager.PERMISSION_GRANTED
+                        } else true
                         CarBridgeConnectionManager.probeNow()
                         inspectClipboardForSuggestion()
                         scope.launch {
@@ -450,13 +467,6 @@ class MainActivity : ComponentActivity() {
                                             onClearPendingQueue = {
                                                 CarBridgeConnectionManager.clearPendingOutbox()
                                             },
-                                            onOpenSystemShareSheet = { rawText ->
-                                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                                    type = "text/plain"
-                                                    putExtra(Intent.EXTRA_TEXT, rawText)
-                                                }
-                                                startActivity(Intent.createChooser(sendIntent, "Chia sẻ đường liên kết"))
-                                            },
                                             onOpenSettings = { selectedTab = 1 }
                                         )
                                     } else {
@@ -537,6 +547,7 @@ class MainActivity : ComponentActivity() {
                                         state = state,
                                         canDrawOverlays = canDrawOverlays,
                                         isBatteryIgnored = isBatteryIgnored,
+                                        hasNotificationPerm = hasNotificationPerm,
                                         installedMaps = installedMaps,
                                         bleStatus = bleStatus,
                                         availableUpdate = availableUpdate,

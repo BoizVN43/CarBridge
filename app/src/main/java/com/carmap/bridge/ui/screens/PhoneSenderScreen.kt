@@ -108,7 +108,6 @@ fun PhoneSenderScreen(
     onFindParkedCar: () -> Unit,
     onPingBox: () -> Unit,
     onClearPendingQueue: () -> Unit,
-    onOpenSystemShareSheet: (String) -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val accents = LocalCockpitAccents.current
@@ -148,93 +147,99 @@ fun PhoneSenderScreen(
         contentAlignment = Alignment.TopCenter
     ) {
         if (adaptive.isTwoColumn) {
-            Row(
+            Column(
                 modifier = Modifier
-                    .widthIn(max = 1120.dp)
+                    .widthIn(max = 1140.dp)
                     .fillMaxSize()
                     .padding(horizontal = adaptive.screenPadding)
-                    .padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
+                    .padding(top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
             ) {
-                Column(
+                SenderHeader(state, activeBox != null, accents, adaptive, onOpenSettings)
+                Row(
                     modifier = Modifier
-                        .weight(0.95f)
-                        .verticalScroll(rememberScrollState())
-                        .padding(bottom = adaptive.navBottomPadding),
-                    verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
                 ) {
-                    SenderHeader(state, activeBox != null, accents, adaptive, onOpenSettings)
-                    HeroBoxTargetCard(state, accents, adaptive, onPingBox, onOpenSettings)
-                    if (!clipboardSuggestion.isNullOrBlank()) {
-                        ClipboardSuggestionBanner(
-                            text = clipboardSuggestion,
+                    Column(
+                        modifier = Modifier
+                            .weight(0.95f)
+                            .verticalScroll(rememberScrollState())
+                            .padding(bottom = adaptive.navBottomPadding),
+                        verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
+                    ) {
+                        HeroBoxTargetCard(state, accents, adaptive, onPingBox)
+                        if (!clipboardSuggestion.isNullOrBlank()) {
+                            ClipboardSuggestionBanner(
+                                text = clipboardSuggestion,
+                                accents = accents,
+                                adaptive = adaptive,
+                                onAction = {
+                                    if (PairingCodeHelper.parsePairingUri(clipboardSuggestion) != null) {
+                                        onAcceptClipboardPairing(clipboardSuggestion)
+                                    } else {
+                                        onSendLink(clipboardSuggestion, state.phoneTargetOverride)
+                                    }
+                                    onDismissClipboard()
+                                },
+                                onDismiss = onDismissClipboard
+                            )
+                        }
+                        if (!state.pendingQueueTitle.isNullOrBlank()) {
+                            SmartQueueBanner(state.pendingQueueTitle, accents, adaptive, onClearPendingQueue)
+                        }
+                        StatusBannerCard(state.lastStatusBanner, accents, adaptive)
+                        ClipboardBridgeCard(
+                            state = state,
+                            clipDraft = clipDraft,
                             accents = accents,
                             adaptive = adaptive,
-                            onAction = {
-                                if (PairingCodeHelper.parsePairingUri(clipboardSuggestion) != null) {
-                                    onAcceptClipboardPairing(clipboardSuggestion)
-                                } else {
-                                    onSendLink(clipboardSuggestion, state.phoneTargetOverride)
-                                }
-                                onDismissClipboard()
+                            onClipDraftChange = { clipDraft = it },
+                            onSendClipboard = { text ->
+                                onSendClipboardText(text)
+                                if (text == clipDraft) clipDraft = ""
                             },
-                            onDismiss = onDismissClipboard
+                            onPullClipboard = onPullClipboardFromBox
+                        )
+                        CarToolsCard(
+                            state = state,
+                            accents = accents,
+                            adaptive = adaptive,
+                            onPickFileToSend = onPickFileToSend,
+                            onSaveParkingPin = onSaveParkingPin,
+                            onFindParkedCar = onFindParkedCar
                         )
                     }
-                    if (!state.pendingQueueTitle.isNullOrBlank()) {
-                        SmartQueueBanner(state.pendingQueueTitle, accents, adaptive, onClearPendingQueue)
-                    }
-                    StatusBannerCard(state.lastStatusBanner, accents, adaptive)
-                    ClipboardBridgeCard(
-                        state = state,
-                        clipDraft = clipDraft,
-                        accents = accents,
-                        adaptive = adaptive,
-                        onClipDraftChange = { clipDraft = it },
-                        onSendClipboard = { text ->
-                            onSendClipboardText(text)
-                            if (text == clipDraft) clipDraft = ""
-                        },
-                        onPullClipboard = onPullClipboardFromBox
-                    )
-                    CarToolsCard(
-                        state = state,
-                        accents = accents,
-                        adaptive = adaptive,
-                        onPickFileToSend = onPickFileToSend,
-                        onSaveParkingPin = onSaveParkingPin,
-                        onFindParkedCar = onFindParkedCar
-                    )
-                }
-                Column(
-                    modifier = Modifier
-                        .weight(1.15f)
-                        .verticalScroll(rememberScrollState())
-                        .padding(bottom = adaptive.navBottomPadding),
-                    verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
-                ) {
-                    SavedPlacesStrip(
-                        state = state,
-                        accents = accents,
-                        adaptive = adaptive,
-                        onSendPlace = { onSendLink(it, state.phoneTargetOverride) },
-                        onRemovePlace = { BridgeRepository.removeSavedPlace(it) },
-                        onAddClick = { showAddPlaceDialog = true }
-                    )
-                    DestinationComposeCard(
-                        state = state,
-                        linkDraft = linkDraft,
-                        liveParsed = liveParsed,
-                        accents = accents,
-                        adaptive = adaptive,
-                        showActionButtons = true,
-                        onLinkDraftChange = { linkDraft = it },
-                        onStartVoice = onStartVoiceSearch,
-                        onSendLink = onSendLink,
-                        onOpenSystemShareSheet = onOpenSystemShareSheet
-                    )
-                    if (state.history.isNotEmpty()) {
-                        RecentHistoryCard(state, accents, adaptive, onPickRecent = { linkDraft = it })
+                    Column(
+                        modifier = Modifier
+                            .weight(1.15f)
+                            .verticalScroll(rememberScrollState())
+                            .padding(bottom = adaptive.navBottomPadding),
+                        verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
+                    ) {
+                        SavedPlacesStrip(
+                            state = state,
+                            accents = accents,
+                            adaptive = adaptive,
+                            onSendPlace = { onSendLink(it, state.phoneTargetOverride) },
+                            onRemovePlace = { BridgeRepository.removeSavedPlace(it) },
+                            onAddClick = { showAddPlaceDialog = true }
+                        )
+                        DestinationComposeCard(
+                            state = state,
+                            linkDraft = linkDraft,
+                            liveParsed = liveParsed,
+                            accents = accents,
+                            adaptive = adaptive,
+                            showActionButtons = true,
+                            onLinkDraftChange = { linkDraft = it },
+                            onStartVoice = onStartVoiceSearch,
+                            onSendLink = onSendLink
+                        )
+                        if (state.history.isNotEmpty()) {
+                            RecentHistoryCard(state, accents, adaptive, onPickRecent = { linkDraft = it })
+                        }
                     }
                 }
             }
@@ -243,14 +248,14 @@ fun PhoneSenderScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
                     start = adaptive.screenPadding,
-                    top = 6.dp,
+                    top = 8.dp,
                     end = adaptive.screenPadding,
                     bottom = adaptive.navBottomPadding
                 ),
                 verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
             ) {
                 item { SenderHeader(state, activeBox != null, accents, adaptive, onOpenSettings) }
-                item { HeroBoxTargetCard(state, accents, adaptive, onPingBox, onOpenSettings) }
+                item { HeroBoxTargetCard(state, accents, adaptive, onPingBox) }
                 if (!clipboardSuggestion.isNullOrBlank()) {
                     item {
                         ClipboardSuggestionBanner(
@@ -295,8 +300,7 @@ fun PhoneSenderScreen(
                         showActionButtons = true,
                         onLinkDraftChange = { linkDraft = it },
                         onStartVoice = onStartVoiceSearch,
-                        onSendLink = onSendLink,
-                        onOpenSystemShareSheet = onOpenSystemShareSheet
+                        onSendLink = onSendLink
                     )
                 }
                 item {
@@ -399,8 +403,7 @@ private fun HeroBoxTargetCard(
     state: BridgeUiState,
     accents: CockpitAccents,
     adaptive: AdaptiveMetrics,
-    onPingBox: () -> Unit,
-    onOpenSettings: () -> Unit
+    onPingBox: () -> Unit
 ) {
     val context = LocalContext.current
     val activeBox = state.pairedBox
@@ -484,19 +487,19 @@ private fun HeroBoxTargetCard(
                             )
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         CockpitPill(
                             onClick = { showCameraScanner = true },
                             shape = RoundedCornerShape(999.dp),
                             color = Color(0x2238BDF8)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(Icons.Rounded.QrCodeScanner, contentDescription = "Quét QR", tint = Color(0xFF38BDF8), modifier = Modifier.size(13.dp))
-                                Spacer(Modifier.width(3.dp))
-                                Text("QR", fontSize = adaptive.sp(11f), color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.width(4.dp))
+                                Text("Quét QR", fontSize = adaptive.sp(11f), color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
                             }
                         }
                         CockpitPill(
@@ -505,24 +508,12 @@ private fun HeroBoxTargetCard(
                             color = Color(0x2210B981)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(Icons.Rounded.Speed, contentDescription = null, tint = Color(0xFF34D399), modifier = Modifier.size(13.dp))
-                                Spacer(Modifier.width(3.dp))
+                                Spacer(Modifier.width(4.dp))
                                 Text("Ping", fontSize = adaptive.sp(11f), color = Color(0xFF34D399), fontWeight = FontWeight.Bold)
-                            }
-                        }
-                        CockpitPill(
-                            onClick = onOpenSettings,
-                            shape = RoundedCornerShape(999.dp),
-                            color = Color(0x18FFFFFF)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Rounded.Settings, contentDescription = "Cài đặt", tint = Color(0xFFCBD5E1), modifier = Modifier.size(13.dp))
                             }
                         }
                     }
@@ -781,9 +772,9 @@ private fun DestinationComposeCard(
     showActionButtons: Boolean,
     onLinkDraftChange: (String) -> Unit,
     onStartVoice: () -> Unit,
-    onSendLink: (String, MapProvider) -> Unit,
-    onOpenSystemShareSheet: (String) -> Unit
+    onSendLink: (String, MapProvider) -> Unit
 ) {
+    val context = LocalContext.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
@@ -929,8 +920,17 @@ private fun DestinationComposeCard(
             if (showActionButtons) {
                 SenderActionButtons(
                     adaptive = adaptive,
-                    enabled = linkDraft.isNotBlank(),
-                    onOpenSystemShareSheet = { onOpenSystemShareSheet(linkDraft) },
+                    sendEnabled = linkDraft.isNotBlank(),
+                    onPaste = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }
+                            ?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
+                        if (clip.isNotBlank()) {
+                            onLinkDraftChange(clip)
+                        } else {
+                            Toast.makeText(context, "Clipboard đang trống", Toast.LENGTH_SHORT).show()
+                        }
+                    },
                     onSend = { onSendLink(linkDraft, state.phoneTargetOverride) }
                 )
             }
@@ -1037,7 +1037,7 @@ private fun ClipboardBridgeCard(
                 ) {
                     Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Dán & Gửi ngay", fontSize = adaptive.sp(12f), fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text("Dán & Gửi", fontSize = adaptive.sp(12f), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
 
                 Button(
@@ -1343,8 +1343,8 @@ private fun AddSavedPlaceDialog(
 @Composable
 private fun SenderActionButtons(
     adaptive: AdaptiveMetrics,
-    enabled: Boolean,
-    onOpenSystemShareSheet: () -> Unit,
+    sendEnabled: Boolean,
+    onPaste: () -> Unit,
     onSend: () -> Unit
 ) {
     Row(
@@ -1352,24 +1352,23 @@ private fun SenderActionButtons(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         OutlinedButton(
-            onClick = onOpenSystemShareSheet,
-            enabled = enabled,
+            onClick = onPaste,
             modifier = Modifier
-                .weight(0.95f)
+                .weight(0.85f)
                 .height(adaptive.dp(42f)),
             shape = RoundedCornerShape(13.dp),
             contentPadding = PaddingValues(horizontal = 8.dp)
         ) {
-            Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(15.dp))
+            Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(15.dp))
             Spacer(Modifier.width(4.dp))
-            Text("Chia sẻ", fontSize = adaptive.sp(12.5f), fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text("Dán link", fontSize = adaptive.sp(12f), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
 
         Button(
             onClick = onSend,
-            enabled = enabled,
+            enabled = sendEnabled,
             modifier = Modifier
-                .weight(1.3f)
+                .weight(1.35f)
                 .height(adaptive.dp(42f)),
             shape = RoundedCornerShape(13.dp),
             contentPadding = PaddingValues(horizontal = 8.dp),
@@ -1380,7 +1379,7 @@ private fun SenderActionButtons(
         ) {
             Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = null, modifier = Modifier.size(15.dp))
             Spacer(Modifier.width(5.dp))
-            Text("Gửi lên Box", fontSize = adaptive.sp(12.5f), fontWeight = FontWeight.Bold, maxLines = 1)
+            Text("Gửi lên Box", fontSize = adaptive.sp(12.5f), fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

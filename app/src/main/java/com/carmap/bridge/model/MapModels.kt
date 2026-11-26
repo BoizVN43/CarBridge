@@ -19,17 +19,7 @@ enum class BridgeAction {
     WEB_LINK,
     CLIPBOARD,
     PULL_CLIPBOARD,
-    REMOTE_CONTROL,
     PING
-}
-
-enum class RemoteCommand(val label: String) {
-    PLAY_PAUSE("Phát / Tạm dừng"),
-    NEXT("Bài tiếp"),
-    PREVIOUS("Bài trước"),
-    VOL_UP("Tăng âm lượng"),
-    VOL_DOWN("Giảm âm lượng"),
-    MUTE("Tắt tiếng")
 }
 
 enum class MapProvider(

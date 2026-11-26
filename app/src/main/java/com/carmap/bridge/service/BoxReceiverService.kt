@@ -10,7 +10,6 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
@@ -20,8 +19,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
-import android.os.SystemClock
-import android.view.KeyEvent
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
@@ -34,7 +31,6 @@ import com.carmap.bridge.model.BridgeAction
 import com.carmap.bridge.model.LinkKind
 import com.carmap.bridge.model.MapProvider
 import com.carmap.bridge.model.ParsedMapLink
-import com.carmap.bridge.model.RemoteCommand
 import com.carmap.bridge.network.BleBoxServerTransport
 import com.carmap.bridge.network.BlePermissionsHelper
 import com.carmap.bridge.network.BoxNetworkConstants
@@ -193,35 +189,6 @@ class BoxReceiverService : Service() {
                 )
                 BridgeRepository.setStatusBanner("Box đã chép Clipboard (${text.length} ký tự)")
                 return true to "Đã chép vào Clipboard của Box"
-            }
-
-            BridgeAction.REMOTE_CONTROL -> {
-                val cmd = runCatching { RemoteCommand.valueOf(packet.rawText.trim()) }.getOrNull()
-                    ?: return false to "Lệnh điều khiển không hợp lệ"
-                withContext(Dispatchers.Main.immediate) {
-                    val audio = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return@withContext
-                    when (cmd) {
-                        RemoteCommand.VOL_UP -> audio.adjustStreamVolume(
-                            AudioManager.STREAM_MUSIC,
-                            AudioManager.ADJUST_RAISE,
-                            AudioManager.FLAG_SHOW_UI
-                        )
-                        RemoteCommand.VOL_DOWN -> audio.adjustStreamVolume(
-                            AudioManager.STREAM_MUSIC,
-                            AudioManager.ADJUST_LOWER,
-                            AudioManager.FLAG_SHOW_UI
-                        )
-                        RemoteCommand.MUTE -> audio.adjustStreamVolume(
-                            AudioManager.STREAM_MUSIC,
-                            AudioManager.ADJUST_TOGGLE_MUTE,
-                            AudioManager.FLAG_SHOW_UI
-                        )
-                        RemoteCommand.PLAY_PAUSE -> dispatchMediaKey(audio, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
-                        RemoteCommand.NEXT -> dispatchMediaKey(audio, KeyEvent.KEYCODE_MEDIA_NEXT)
-                        RemoteCommand.PREVIOUS -> dispatchMediaKey(audio, KeyEvent.KEYCODE_MEDIA_PREVIOUS)
-                    }
-                }
-                return true to "Box: ${cmd.label}"
             }
 
             BridgeAction.PULL_CLIPBOARD -> {
@@ -435,12 +402,6 @@ class BoxReceiverService : Service() {
         )
         BridgeRepository.setStatusBanner("Box đã nhận tệp: $fileName")
         return true to if (isApk) "Box đã nhận APK $fileName" else "Box đã nhận $fileName"
-    }
-
-    private fun dispatchMediaKey(audio: AudioManager, keyCode: Int) {
-        val now = SystemClock.uptimeMillis()
-        audio.dispatchMediaKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0))
-        audio.dispatchMediaKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0))
     }
 
     override fun onDestroy() {

@@ -162,10 +162,17 @@ fun BoxDashboardScreen(
                                 HistorySearchBar(searchQuery, onQueryChange = { searchQuery = it })
                             }
                             if (filteredHistory.isEmpty()) {
-                                EmptyHistoryInline(adaptive)
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    EmptyHistoryInline(adaptive)
+                                }
                             } else {
                                 LazyColumn(
-                                    modifier = Modifier.fillMaxSize(),
+                                    modifier = Modifier.weight(1f).fillMaxWidth(),
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     items(filteredHistory, key = { it.id }) { rec ->
@@ -292,19 +299,19 @@ private fun BoxTopBar(
             }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             CockpitPill(
                 onClick = onShowQr,
                 shape = RoundedCornerShape(999.dp),
                 color = accents.emeraldContainer
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Rounded.QrCode2, contentDescription = null, tint = accents.emerald, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("Mã QR", fontSize = adaptive.sp(11.5f), fontWeight = FontWeight.Bold, color = accents.emerald)
+                    Icon(Icons.Rounded.QrCode2, contentDescription = null, tint = accents.emerald, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("QR", fontSize = adaptive.sp(11.5f), fontWeight = FontWeight.Bold, color = accents.emerald)
                 }
             }
             CockpitPill(
@@ -313,16 +320,16 @@ private fun BoxTopBar(
                 color = if (state.boxServiceRunning) accents.coralContainer else Color(0xFF10B981)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         imageVector = if (state.boxServiceRunning) Icons.Rounded.Stop else Icons.Rounded.PlayArrow,
                         contentDescription = null,
                         tint = if (state.boxServiceRunning) accents.coral else Color.White,
-                        modifier = Modifier.size(15.dp)
+                        modifier = Modifier.size(14.dp)
                     )
-                    Spacer(Modifier.width(4.dp))
+                    Spacer(Modifier.width(3.dp))
                     Text(
                         text = if (state.boxServiceRunning) "Tắt" else "Bật",
                         fontSize = adaptive.sp(11.5f),
@@ -362,16 +369,18 @@ private fun BoxStatusHeroCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                         Text(
                             text = "CHẾ ĐỘ DẪN ĐƯỜNG TỰ ĐỘNG",
                             fontSize = adaptive.sp(10f),
                             fontWeight = FontWeight.Bold,
-                            letterSpacing = adaptive.sp(0.8f),
-                            color = Color(0xFF34D399)
+                            letterSpacing = adaptive.sp(0.7f),
+                            color = Color(0xFF34D399),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "App bản đồ ưu tiên: ${state.boxPreferredTarget.displayName}",
+                            text = "App bản đồ: ${state.boxPreferredTarget.displayName}",
                             fontSize = adaptive.sp(13.5f),
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
@@ -388,7 +397,9 @@ private fun BoxStatusHeroCard(
                             fontSize = adaptive.sp(11f),
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF34D399),
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                         )
                     }
                 }
@@ -397,7 +408,7 @@ private fun BoxStatusHeroCard(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    BoxMetricPill("Tự dẫn đường", if (state.autoOpenOnBox) "Bật" else "Tắt", state.autoOpenOnBox, adaptive, Modifier.weight(1f))
+                    BoxMetricPill("Tự mở", if (state.autoOpenOnBox) "Bật" else "Tắt", state.autoOpenOnBox, adaptive, Modifier.weight(1f))
                     BoxMetricPill("Mở từ nền", if (canDrawOverlays) "Đã cấp" else "Thiếu", canDrawOverlays, adaptive, Modifier.weight(1f))
                     BoxMetricPill("Đã nhận", "${state.history.size} mục", true, adaptive, Modifier.weight(1f))
                 }

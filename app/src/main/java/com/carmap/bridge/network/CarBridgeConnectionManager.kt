@@ -30,7 +30,6 @@ import com.carmap.bridge.model.DiscoveredBox
 import com.carmap.bridge.model.MapProvider
 import com.carmap.bridge.model.ParsedMapLink
 import com.carmap.bridge.model.ParkingPin
-import com.carmap.bridge.model.RemoteCommand
 import com.carmap.bridge.model.TransportChannel
 import com.carmap.bridge.parser.MapLinkResolver
 import com.carmap.bridge.parser.MediaLinkHelper
@@ -333,27 +332,6 @@ object CarBridgeConnectionManager {
             BridgeRepository.setStatusBanner("Gửi tệp thất bại: ${err.message}")
         }
         res
-    }
-
-    suspend fun sendRemoteCommand(context: Context, command: RemoteCommand): Result<String> {
-        init(context)
-        val state = BridgeRepository.state.value
-        val box = state.pairedBox ?: state.discoveredBoxes.firstOrNull()
-            ?: return Result.failure(IllegalStateException("Chưa thấy Android Box"))
-        val res = client?.sendHybridToBox(
-            primaryBox = box,
-            discoveredBoxes = state.discoveredBoxes,
-            preferBle = state.preferBleOverLan,
-            pin = state.pairingPin,
-            senderName = Build.MODEL ?: "Phone",
-            rawText = command.name,
-            preferredTarget = MapProvider.AUTO,
-            action = BridgeAction.REMOTE_CONTROL,
-            onWorkingBoxResolved = { BridgeRepository.selectPairedBox(context, it) }
-        ) ?: Result.failure(IllegalStateException("Chưa khởi tạo kết nối"))
-        res.onSuccess { BridgeRepository.setStatusBanner(it) }
-            .onFailure { BridgeRepository.setStatusBanner(it.message ?: "Điều khiển thất bại") }
-        return res
     }
 
     suspend fun sendOrQueue(
