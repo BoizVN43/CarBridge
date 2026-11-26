@@ -11,6 +11,7 @@ import com.carmap.bridge.model.DeviceRole
 import com.carmap.bridge.model.DiscoveredBox
 import com.carmap.bridge.model.MapProvider
 import com.carmap.bridge.model.ParsedMapLink
+import com.carmap.bridge.model.SavedPlace
 import com.carmap.bridge.model.SharedTransferRecord
 import com.carmap.bridge.model.ThemeMode
 import com.carmap.bridge.network.BoxNetworkConstants
@@ -48,6 +49,9 @@ data class BridgeUiState(
     val discoveredBoxes: List<DiscoveredBox> = emptyList(),
     val pairedBox: DiscoveredBox? = null,
     val history: List<SharedTransferRecord> = emptyList(),
+    val savedPlaces: List<SavedPlace> = emptyList(),
+    val pendingQueueTitle: String? = null,
+    val lastPingSummary: String? = null,
     val lastStatusBanner: String? = null
 )
 
@@ -237,6 +241,41 @@ object BridgeRepository {
         _state.update { it.copy(lastStatusBanner = msg) }
     }
 
+    fun setPendingQueueTitle(title: String?) {
+        _state.update { it.copy(pendingQueueTitle = title) }
+    }
+
+    fun setLastPingSummary(summary: String?) {
+        _state.update { it.copy(lastPingSummary = summary) }
+    }
+
+    fun addSavedPlace(label: String, rawLink: String) {
+        val cleanLabel = label.trim()
+        val cleanLink = rawLink.trim()
+        if (cleanLabel.isBlank() || cleanLink.isBlank()) return
+        val item = SavedPlace(
+            id = UUID.randomUUID().toString(),
+            label = cleanLabel,
+            rawLink = cleanLink
+        )
+        _state.update { cur ->
+            cur.copy(savedPlaces = (cur.savedPlaces + item).take(12))
+        }
+        persist()
+    }
+
+    fun removeSavedPlace(id: String) {
+        _state.update { cur ->
+            cur.copy(savedPlaces = cur.savedPlaces.filterNot { it.id == id })
+        }
+        persist()
+    }
+
+    fun clearHistory() {
+        _state.update { it.copy(history = emptyList()) }
+        persist()
+    }
+
     fun recordTransfer(
         direction: String,
         peerName: String,
@@ -258,8 +297,9 @@ object BridgeRepository {
             status = status
         )
         _state.update {
-            it.copy(history = (listOf(record) + it.history).take(25))
+            it.copy(history = (listOf(record) + it.history).take(40))
         }
+        persist()
     }
 
     fun findBoxByShortcutId(shortcutId: String?): DiscoveredBox? {

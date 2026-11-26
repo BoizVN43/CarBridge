@@ -5,6 +5,7 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.util.Log
+import com.carmap.bridge.model.BridgeAction
 import com.carmap.bridge.model.DiscoveredBox
 import com.carmap.bridge.model.MapProvider
 import com.carmap.bridge.model.TransportChannel
@@ -44,10 +45,30 @@ data class IncomingMapPacket(
     val senderName: String,
     val rawText: String,
     val resolvedUrl: String = "",
-    val preferredTarget: MapProvider = MapProvider.AUTO
+    val preferredTarget: MapProvider = MapProvider.AUTO,
+    val action: BridgeAction = BridgeAction.MAP
 )
 
 internal object LanBroadcastHelper {
+    fun localIpv4Address(): String? {
+        return runCatching {
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
+            var fallback: String? = null
+            for (intf in interfaces) {
+                if (!intf.isUp || intf.isLoopback) continue
+                for (addr in intf.inetAddresses) {
+                    if (addr is Inet4Address && !addr.isLoopbackAddress) {
+                        val ip = addr.hostAddress ?: continue
+                        if (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.")) {
+                            return ip
+                        }
+                        if (fallback == null) fallback = ip
+                    }
+                }
+            }
+            fallback
+        }.getOrNull()
+    }
     fun broadcastAddresses(): List<InetAddress> {
         val result = linkedSetOf<InetAddress>()
         runCatching {
@@ -241,7 +262,10 @@ class BoxServerTransport(
                 resolvedUrl = json.optString("resolvedUrl", ""),
                 preferredTarget = runCatching {
                     MapProvider.valueOf(json.optString("preferredTarget", MapProvider.AUTO.name))
-                }.getOrDefault(MapProvider.AUTO)
+                }.getOrDefault(MapProvider.AUTO),
+                action = runCatching {
+                    BridgeAction.valueOf(json.optString("action", BridgeAction.MAP.name))
+                }.getOrDefault(BridgeAction.MAP)
             )
             val remoteIp = s.inetAddress?.hostAddress ?: "LAN"
             val (ok, message) = onPacketReceived(packet, remoteIp)
@@ -498,6 +522,40 @@ class PhoneDiscoveryAndClient(
         }
     }
 
+    suspend fun pingBox(box: DiscoveredBox): Result<Pair<String, Long>> = withContext(Dispatchers.IO) {
+        val start = System.currentTimeMillis()
+        if (box.channel == TransportChannel.BLE && !box.bleAddress.isNullOrBlank()) {
+            val res = bleClient.sendToBox(
+                bleAddress = box.bleAddress,
+                pin = "",
+                senderName = "Ping",
+                rawText = "PING",
+                resolvedUrl = "",
+                preferredTarget = MapProvider.AUTO,
+                action = BridgeAction.PING
+            )
+            val rtt = (System.currentTimeMillis() - start).coerceAtLeast(1L)
+            return@withContext res.map { "BLE" to rtt }
+        }
+        runCatching {
+            Socket().use { socket ->
+                socket.tcpNoDelay = true
+                socket.connect(InetSocketAddress(box.host, box.port), 1500)
+                socket.soTimeout = 2000
+                val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8))
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+                writer.write("""{"type":"PING"}""")
+                writer.newLine()
+                writer.flush()
+                val respStr = reader.readLine() ?: throw IllegalStateException("Box không phản hồi")
+                val resp = JSONObject(respStr)
+                if (!resp.optBoolean("ok", false)) throw IllegalStateException("Ping thất bại")
+                val rtt = (System.currentTimeMillis() - start).coerceAtLeast(1L)
+                "LAN" to rtt
+            }
+        }
+    }
+
     suspend fun sendHybridToBox(
         primaryBox: DiscoveredBox,
         discoveredBoxes: List<DiscoveredBox>,
@@ -507,6 +565,7 @@ class PhoneDiscoveryAndClient(
         rawText: String,
         resolvedUrl: String = "",
         preferredTarget: MapProvider,
+        action: BridgeAction = BridgeAction.MAP,
         onWorkingBoxResolved: (DiscoveredBox) -> Unit = {}
     ): Result<String> {
         // Build ordered candidate list: handle DHCP IP change by matching box.id!
@@ -531,9 +590,9 @@ class PhoneDiscoveryAndClient(
         var lastError: Throwable? = null
         for (candidate in orderedCandidates) {
             val res = if (candidate.channel == TransportChannel.BLE && !candidate.bleAddress.isNullOrBlank()) {
-                bleClient.sendToBox(candidate.bleAddress, pin, senderName, rawText, resolvedUrl, preferredTarget)
+                bleClient.sendToBox(candidate.bleAddress, pin, senderName, rawText, resolvedUrl, preferredTarget, action)
             } else {
-                sendToBoxWithRetry(candidate, pin, senderName, rawText, resolvedUrl, preferredTarget)
+                sendToBoxWithRetry(candidate, pin, senderName, rawText, resolvedUrl, preferredTarget, action)
             }
             if (res.isSuccess) {
                 if (candidate.host != primaryBox.host || candidate.channel != primaryBox.channel) {
@@ -552,12 +611,13 @@ class PhoneDiscoveryAndClient(
         senderName: String,
         rawText: String,
         resolvedUrl: String,
-        preferredTarget: MapProvider
+        preferredTarget: MapProvider,
+        action: BridgeAction
     ): Result<String> {
-        val first = sendToBox(box, pin, senderName, rawText, resolvedUrl, preferredTarget)
+        val first = sendToBox(box, pin, senderName, rawText, resolvedUrl, preferredTarget, action)
         if (first.isSuccess) return first
         delay(180L)
-        return sendToBox(box, pin, senderName, rawText, resolvedUrl, preferredTarget)
+        return sendToBox(box, pin, senderName, rawText, resolvedUrl, preferredTarget, action)
     }
 
     suspend fun sendToBox(
@@ -566,7 +626,8 @@ class PhoneDiscoveryAndClient(
         senderName: String,
         rawText: String,
         resolvedUrl: String = "",
-        preferredTarget: MapProvider
+        preferredTarget: MapProvider,
+        action: BridgeAction = BridgeAction.MAP
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             Socket().use { socket ->
@@ -581,6 +642,7 @@ class PhoneDiscoveryAndClient(
                     put("rawText", rawText)
                     if (resolvedUrl.isNotBlank()) put("resolvedUrl", resolvedUrl)
                     put("preferredTarget", preferredTarget.name)
+                    put("action", action.name)
                 }.toString()
                 writer.write(payload)
                 writer.newLine()

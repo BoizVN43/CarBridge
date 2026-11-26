@@ -29,6 +29,7 @@ import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -59,7 +60,9 @@ import com.carmap.bridge.model.DeviceRole
 import com.carmap.bridge.model.MapProvider
 import com.carmap.bridge.model.ThemeMode
 import com.carmap.bridge.network.BleStatus
+import com.carmap.bridge.ui.components.BoxQrPairingDialog
 import com.carmap.bridge.ui.components.CockpitPill
+import com.carmap.bridge.ui.components.PhoneQrPairInputDialog
 import com.carmap.bridge.ui.components.SettingsActionRow
 import com.carmap.bridge.ui.components.SettingsDivider
 import com.carmap.bridge.ui.components.SettingsGroupCard
@@ -462,6 +465,31 @@ private fun PhoneConnectionSettingsCard(
         }
 
         SettingsDivider()
+        var showQrInput by remember { mutableStateOf(false) }
+        if (showQrInput) {
+            PhoneQrPairInputDialog(
+                onParsed = { parsed ->
+                    if (parsed.pin.isNotBlank()) {
+                        BridgeRepository.updateSettings(pin = parsed.pin)
+                    }
+                    BridgeRepository.upsertDiscoveredBox(parsed.box)
+                    BridgeRepository.selectPairedBox(context, parsed.box)
+                },
+                onDismiss = { showQrInput = false }
+            )
+        }
+        SettingsActionRow(
+            icon = Icons.Rounded.QrCode2,
+            tint = accents.emerald,
+            bg = accents.emeraldContainer,
+            title = "Ghép nhanh bằng mã QR",
+            subtitle = "Quét hoặc dán mã ghép từ màn hình Android Box",
+            trailingText = "Mở",
+            trailingHighlight = true,
+            onClick = { showQrInput = true }
+        )
+
+        SettingsDivider()
         SettingsToggleRow(
             title = "Kết nối Bluetooth LE (BLE)",
             subtitle = "Dùng khi 2 máy dùng SIM 4G riêng không chung Wi-Fi",
@@ -528,6 +556,26 @@ private fun BoxIdentitySettingsCard(
             singleLine = true,
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth()
+        )
+        SettingsDivider()
+        var showBoxQr by remember { mutableStateOf(false) }
+        val accents = LocalCockpitAccents.current
+        if (showBoxQr) {
+            BoxQrPairingDialog(
+                boxName = state.boxName,
+                pin = state.pairingPin,
+                onDismiss = { showBoxQr = false }
+            )
+        }
+        SettingsActionRow(
+            icon = Icons.Rounded.QrCode2,
+            tint = accents.emerald,
+            bg = accents.emeraldContainer,
+            title = "Hiện mã QR ghép nối",
+            subtitle = "Để điện thoại quét ghép IP & PIN nhanh trong 1 giây",
+            trailingText = "Hiện QR",
+            trailingHighlight = true,
+            onClick = { showBoxQr = true }
         )
         SettingsDivider()
         SettingsToggleRow(

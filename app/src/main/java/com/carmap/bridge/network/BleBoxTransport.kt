@@ -29,6 +29,7 @@ import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.carmap.bridge.model.BridgeAction
 import com.carmap.bridge.model.DiscoveredBox
 import com.carmap.bridge.model.MapProvider
 import com.carmap.bridge.model.TransportChannel
@@ -350,7 +351,10 @@ class BleBoxServerTransport(
                         resolvedUrl = json.optString("resolvedUrl", ""),
                         preferredTarget = runCatching {
                             MapProvider.valueOf(json.optString("preferredTarget", MapProvider.AUTO.name))
-                        }.getOrDefault(MapProvider.AUTO)
+                        }.getOrDefault(MapProvider.AUTO),
+                        action = runCatching {
+                            BridgeAction.valueOf(json.optString("action", BridgeAction.MAP.name))
+                        }.getOrDefault(BridgeAction.MAP)
                     )
                     onPacketReceived(packet, "BLE:${device.address}")
                 }.getOrElse {
@@ -494,15 +498,16 @@ class BlePhoneClient(
         senderName: String,
         rawText: String,
         resolvedUrl: String = "",
-        preferredTarget: MapProvider
+        preferredTarget: MapProvider,
+        action: BridgeAction = BridgeAction.MAP
     ): Result<String> {
-        val firstAttempt = sendToBoxOnce(bleAddress, pin, senderName, rawText, resolvedUrl, preferredTarget)
+        val firstAttempt = sendToBoxOnce(bleAddress, pin, senderName, rawText, resolvedUrl, preferredTarget, action)
         if (firstAttempt.isSuccess) return firstAttempt
         val errMsg = firstAttempt.exceptionOrNull()?.message.orEmpty()
         // GATT error 133 or transient BLE link drop: quick 250ms retry
         if (errMsg.contains("133") || errMsg.contains("Mất kết nối BLE")) {
             delay(250L)
-            return sendToBoxOnce(bleAddress, pin, senderName, rawText, resolvedUrl, preferredTarget)
+            return sendToBoxOnce(bleAddress, pin, senderName, rawText, resolvedUrl, preferredTarget, action)
         }
         return firstAttempt
     }
@@ -514,7 +519,8 @@ class BlePhoneClient(
         senderName: String,
         rawText: String,
         resolvedUrl: String,
-        preferredTarget: MapProvider
+        preferredTarget: MapProvider,
+        action: BridgeAction
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             if (!BlePermissionsHelper.hasConnectPermission(context)) {
@@ -532,6 +538,7 @@ class BlePhoneClient(
                 put("rawText", rawText)
                 if (resolvedUrl.isNotBlank()) put("resolvedUrl", resolvedUrl)
                 put("preferredTarget", preferredTarget.name)
+                put("action", action.name)
             }.toString() + "\n").toByteArray(Charsets.UTF_8)
 
             var gattRef: BluetoothGatt? = null

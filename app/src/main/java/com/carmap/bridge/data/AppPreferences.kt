@@ -4,10 +4,24 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.carmap.bridge.model.DeviceRole
 import com.carmap.bridge.model.DiscoveredBox
+import com.carmap.bridge.model.LinkKind
 import com.carmap.bridge.model.MapProvider
+import com.carmap.bridge.model.ParsedMapLink
+import com.carmap.bridge.model.SavedPlace
+import com.carmap.bridge.model.SharedTransferRecord
 import com.carmap.bridge.model.ThemeMode
 import com.carmap.bridge.model.TransportChannel
 import com.carmap.bridge.network.BoxNetworkConstants
+import org.json.JSONArray
+import org.json.JSONObject
+
+data class PersistedOutboxItem(
+    val rawText: String,
+    val resolvedUrl: String,
+    val title: String,
+    val preferredTarget: MapProvider,
+    val queuedAtMs: Long
+)
 
 object AppPreferences {
     private const val PREF_NAME = "carmap_bridge_prefs"
@@ -31,6 +45,10 @@ object AppPreferences {
     private const val KEY_PAIRED_PORT = "paired_port"
     private const val KEY_PAIRED_CHANNEL = "paired_channel"
     private const val KEY_PAIRED_BLE = "paired_ble_addr"
+
+    private const val KEY_HISTORY_JSON = "transfer_history_json"
+    private const val KEY_SAVED_PLACES_JSON = "saved_places_json"
+    private const val KEY_PENDING_OUTBOX_JSON = "pending_outbox_json"
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -80,6 +98,10 @@ object AppPreferences {
             null
         }
 
+        val history = parseHistoryJson(p.getString(KEY_HISTORY_JSON, null))
+        val savedPlaces = parseSavedPlacesJson(p.getString(KEY_SAVED_PLACES_JSON, null))
+        val pendingOutbox = loadPendingOutbox(context)
+
         return BridgeUiState(
             themeMode = theme,
             role = role,
@@ -92,7 +114,10 @@ object AppPreferences {
             simulatePreviewOnEmulator = p.getBoolean(KEY_SIMULATE_PREVIEW, true),
             boxPreferredTarget = boxTarget,
             phoneTargetOverride = phoneTarget,
-            pairedBox = pairedBox
+            pairedBox = pairedBox,
+            history = history,
+            savedPlaces = savedPlaces,
+            pendingQueueTitle = pendingOutbox?.title
         )
     }
 
@@ -119,7 +144,135 @@ object AppPreferences {
                 putString(KEY_PAIRED_CHANNEL, box.channel.name)
                 putString(KEY_PAIRED_BLE, box.bleAddress)
             }
+
+            putString(KEY_HISTORY_JSON, serializeHistory(state.history))
+            putString(KEY_SAVED_PLACES_JSON, serializeSavedPlaces(state.savedPlaces))
             apply()
         }
+    }
+
+    fun savePendingOutbox(context: Context, item: PersistedOutboxItem?) {
+        val editor = prefs(context).edit()
+        if (item == null) {
+            editor.remove(KEY_PENDING_OUTBOX_JSON)
+        } else {
+            val json = JSONObject().apply {
+                put("rawText", item.rawText)
+                put("resolvedUrl", item.resolvedUrl)
+                put("title", item.title)
+                put("preferredTarget", item.preferredTarget.name)
+                put("queuedAtMs", item.queuedAtMs)
+            }.toString()
+            editor.putString(KEY_PENDING_OUTBOX_JSON, json)
+        }
+        editor.apply()
+    }
+
+    fun loadPendingOutbox(context: Context): PersistedOutboxItem? {
+        val raw = prefs(context).getString(KEY_PENDING_OUTBOX_JSON, null) ?: return null
+        return runCatching {
+            val o = JSONObject(raw)
+            PersistedOutboxItem(
+                rawText = o.getString("rawText"),
+                resolvedUrl = o.optString("resolvedUrl", ""),
+                title = o.optString("title", "Đích đến chờ gửi"),
+                preferredTarget = runCatching {
+                    MapProvider.valueOf(o.optString("preferredTarget", MapProvider.AUTO.name))
+                }.getOrDefault(MapProvider.AUTO),
+                queuedAtMs = o.optLong("queuedAtMs", System.currentTimeMillis())
+            )
+        }.getOrNull()
+    }
+
+    private fun serializeHistory(history: List<SharedTransferRecord>): String {
+        val arr = JSONArray()
+        history.take(40).forEach { rec ->
+            arr.put(
+                JSONObject().apply {
+                    put("id", rec.id)
+                    put("ts", rec.timestampMs)
+                    put("dir", rec.direction)
+                    put("peer", rec.peerName)
+                    put("raw", rec.parsed.rawInput)
+                    put("url", rec.parsed.resolvedUrl)
+                    put("src", rec.parsed.sourceProvider.name)
+                    put("kind", rec.parsed.kind.name)
+                    put("title", rec.parsed.title)
+                    rec.parsed.primaryLat?.let { put("lat", it) }
+                    rec.parsed.primaryLng?.let { put("lng", it) }
+                    put("target", rec.targetProvider.name)
+                    put("intent", rec.intentUri)
+                    put("transport", rec.transportUsed)
+                    put("status", rec.status)
+                }
+            )
+        }
+        return arr.toString()
+    }
+
+    private fun parseHistoryJson(raw: String?): List<SharedTransferRecord> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val parsed = ParsedMapLink(
+                        rawInput = o.optString("raw", ""),
+                        extractedUrl = o.optString("url", "").takeIf { it.isNotBlank() },
+                        resolvedUrl = o.optString("url", ""),
+                        sourceProvider = runCatching { MapProvider.valueOf(o.optString("src")) }.getOrDefault(MapProvider.UNKNOWN),
+                        kind = runCatching { LinkKind.valueOf(o.optString("kind")) }.getOrDefault(LinkKind.UNKNOWN),
+                        title = o.optString("title", "Điểm đến"),
+                        primaryLat = if (o.has("lat")) o.optDouble("lat") else null,
+                        primaryLng = if (o.has("lng")) o.optDouble("lng") else null
+                    )
+                    add(
+                        SharedTransferRecord(
+                            id = o.optString("id", "h-$i"),
+                            timestampMs = o.optLong("ts", System.currentTimeMillis()),
+                            direction = o.optString("dir", ""),
+                            peerName = o.optString("peer", ""),
+                            parsed = parsed,
+                            targetProvider = runCatching { MapProvider.valueOf(o.optString("target")) }.getOrDefault(MapProvider.AUTO),
+                            intentUri = o.optString("intent", ""),
+                            transportUsed = o.optString("transport", ""),
+                            status = o.optString("status", "")
+                        )
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun serializeSavedPlaces(places: List<SavedPlace>): String {
+        val arr = JSONArray()
+        places.take(12).forEach { p ->
+            arr.put(
+                JSONObject().apply {
+                    put("id", p.id)
+                    put("label", p.label)
+                    put("link", p.rawLink)
+                }
+            )
+        }
+        return arr.toString()
+    }
+
+    private fun parseSavedPlacesJson(raw: String?): List<SavedPlace> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val label = o.optString("label", "").trim()
+                    val link = o.optString("link", "").trim()
+                    if (label.isNotBlank() && link.isNotBlank()) {
+                        add(SavedPlace(id = o.optString("id", "p-$i"), label = label, rawLink = link))
+                    }
+                }
+            }
+        }.getOrDefault(emptyList())
     }
 }

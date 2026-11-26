@@ -11,6 +11,23 @@ enum class DeviceRole(val title: String) {
     CAR_BOX_RECEIVER("Android Box (Nhận)")
 }
 
+enum class BridgeAction {
+    MAP,
+    MEDIA_LINK,
+    CLIPBOARD,
+    REMOTE_CONTROL,
+    PING
+}
+
+enum class RemoteCommand(val label: String) {
+    PLAY_PAUSE("Phát / Tạm dừng"),
+    NEXT("Bài tiếp"),
+    PREVIOUS("Bài trước"),
+    VOL_UP("Tăng âm lượng"),
+    VOL_DOWN("Giảm âm lượng"),
+    MUTE("Tắt tiếng")
+}
+
 enum class MapProvider(
     val displayName: String,
     val packageNames: List<String>
@@ -26,7 +43,9 @@ enum class LinkKind(val label: String) {
     PLACE("Địa điểm"),
     COORDINATES("Tọa độ"),
     ROUTE("Lộ trình đã lập"),
-    UNKNOWN("Liên kết bản đồ")
+    MEDIA("Video / Nhạc"),
+    CLIPBOARD("Clipboard"),
+    UNKNOWN("Liên kết")
 }
 
 data class MapWaypoint(
@@ -70,6 +89,12 @@ data class DiscoveredBox(
     val bleAddress: String? = null,
     val isLocalDemo: Boolean = false,
     val lastSeenMs: Long = System.currentTimeMillis()
+)
+
+data class SavedPlace(
+    val id: String,
+    val label: String,
+    val rawLink: String
 )
 
 data class SharedTransferRecord(

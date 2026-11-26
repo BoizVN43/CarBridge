@@ -21,19 +21,26 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.rounded.DirectionsCar
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Navigation
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.QrCode2
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,8 +49,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.carmap.bridge.data.BridgeRepository
 import com.carmap.bridge.data.BridgeUiState
+import com.carmap.bridge.model.LinkKind
 import com.carmap.bridge.model.SharedTransferRecord
+import com.carmap.bridge.ui.components.BoxQrPairingDialog
 import com.carmap.bridge.ui.components.CockpitPill
 import com.carmap.bridge.ui.theme.AdaptiveMetrics
 import com.carmap.bridge.ui.theme.CockpitAccents
@@ -64,6 +74,23 @@ fun BoxDashboardScreen(
     val accents = LocalCockpitAccents.current
     val adaptive = LocalAdaptiveMetrics.current
     val timeFmt = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+    var showQrDialog by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    val filteredHistory = remember(state.history, searchQuery) {
+        if (searchQuery.isBlank()) state.history
+        else state.history.filter {
+            it.parsed.title.contains(searchQuery, ignoreCase = true) ||
+                it.peerName.contains(searchQuery, ignoreCase = true)
+        }
+    }
+
+    if (showQrDialog) {
+        BoxQrPairingDialog(
+            boxName = state.boxName,
+            pin = state.pairingPin,
+            onDismiss = { showQrDialog = false }
+        )
+    }
 
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -85,7 +112,7 @@ fun BoxDashboardScreen(
                         .padding(bottom = adaptive.navBottomPadding),
                     verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
                 ) {
-                    BoxHeader(state.boxName, adaptive, onOpenSettings)
+                    BoxHeader(state.boxName, adaptive, accents, onShowQr = { showQrDialog = true }, onOpenSettings = onOpenSettings)
                     BoxStatusHeroCard(state, canDrawOverlays, accents, adaptive, onToggleBoxService)
                     if (!canDrawOverlays) {
                         OverlayWarningCard(accents, adaptive, onOpenSettings)
@@ -96,11 +123,14 @@ fun BoxDashboardScreen(
                     contentPadding = PaddingValues(bottom = adaptive.navBottomPadding),
                     verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
                 ) {
-                    item { HistorySectionTitle(accents, adaptive) }
-                    if (state.history.isEmpty()) {
+                    item { HistorySectionTitle(state.history.size, accents, adaptive) }
+                    if (state.history.size >= 2) {
+                        item { HistorySearchBar(searchQuery, onQueryChange = { searchQuery = it }) }
+                    }
+                    if (filteredHistory.isEmpty()) {
                         item { EmptyHistoryCard(adaptive) }
                     } else {
-                        items(state.history, key = { it.id }) { rec ->
+                        items(filteredHistory, key = { it.id }) { rec ->
                             HistoryItemCard(rec, timeFmt, accents, adaptive, onReplayRecord)
                         }
                     }
@@ -117,16 +147,19 @@ fun BoxDashboardScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
             ) {
-                item { BoxHeader(state.boxName, adaptive, onOpenSettings) }
+                item { BoxHeader(state.boxName, adaptive, accents, onShowQr = { showQrDialog = true }, onOpenSettings = onOpenSettings) }
                 item { BoxStatusHeroCard(state, canDrawOverlays, accents, adaptive, onToggleBoxService) }
                 if (!canDrawOverlays) {
                     item { OverlayWarningCard(accents, adaptive, onOpenSettings) }
                 }
-                item { HistorySectionTitle(accents, adaptive) }
-                if (state.history.isEmpty()) {
+                item { HistorySectionTitle(state.history.size, accents, adaptive) }
+                if (state.history.size >= 2) {
+                    item { HistorySearchBar(searchQuery, onQueryChange = { searchQuery = it }) }
+                }
+                if (filteredHistory.isEmpty()) {
                     item { EmptyHistoryCard(adaptive) }
                 } else {
-                    items(state.history, key = { it.id }) { rec ->
+                    items(filteredHistory, key = { it.id }) { rec ->
                         HistoryItemCard(rec, timeFmt, accents, adaptive, onReplayRecord)
                     }
                 }
@@ -136,37 +169,63 @@ fun BoxDashboardScreen(
 }
 
 @Composable
-private fun BoxHeader(boxName: String, adaptive: AdaptiveMetrics, onOpenSettings: () -> Unit) {
+private fun BoxHeader(
+    boxName: String,
+    adaptive: AdaptiveMetrics,
+    accents: CockpitAccents,
+    onShowQr: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column {
+        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
             Text(
                 text = "Trạm Android Box",
-                fontSize = adaptive.sp(22f),
+                fontSize = adaptive.sp(20f),
                 fontWeight = FontWeight.ExtraBold,
-                color = MaterialTheme.colorScheme.onBackground
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = boxName,
-                fontSize = adaptive.sp(12f),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                fontSize = adaptive.sp(11.5f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
-        CockpitPill(
-            onClick = onOpenSettings,
-            shape = RoundedCornerShape(999.dp),
-            color = MaterialTheme.colorScheme.surface
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            CockpitPill(
+                onClick = onShowQr,
+                shape = RoundedCornerShape(999.dp),
+                color = accents.emeraldContainer
             ) {
-                Icon(Icons.Rounded.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
-                Spacer(Modifier.width(5.dp))
-                Text("Cấu hình", fontSize = adaptive.sp(11f), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                Row(
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Rounded.QrCode2, contentDescription = null, tint = accents.emerald, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Mã QR", fontSize = adaptive.sp(11f), fontWeight = FontWeight.Bold, color = accents.emerald)
+                }
+            }
+            CockpitPill(
+                onClick = onOpenSettings,
+                shape = RoundedCornerShape(999.dp),
+                color = MaterialTheme.colorScheme.surface
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Rounded.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Cấu hình", fontSize = adaptive.sp(11f), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                }
             }
         }
     }
@@ -291,21 +350,48 @@ private fun OverlayWarningCard(accents: CockpitAccents, adaptive: AdaptiveMetric
 }
 
 @Composable
-private fun HistorySectionTitle(accents: CockpitAccents, adaptive: AdaptiveMetrics) {
+private fun HistorySectionTitle(count: Int, accents: CockpitAccents, adaptive: AdaptiveMetrics) {
     Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(start = 6.dp, top = 4.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Rounded.History, contentDescription = null, tint = accents.cyan, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = "LỊCH SỬ ĐIỂM ĐẾN",
-            fontSize = adaptive.sp(11f),
-            fontWeight = FontWeight.Bold,
-            letterSpacing = adaptive.sp(0.8f),
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.History, contentDescription = null, tint = accents.cyan, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "LỊCH SỬ ĐIỂM ĐẾN ($count)",
+                fontSize = adaptive.sp(10.5f),
+                fontWeight = FontWeight.Bold,
+                letterSpacing = adaptive.sp(0.7f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (count > 0) {
+            Text(
+                text = "Xóa lịch sử",
+                fontSize = adaptive.sp(11f),
+                fontWeight = FontWeight.SemiBold,
+                color = accents.coral,
+                modifier = Modifier.clickable { BridgeRepository.clearHistory() }
+            )
+        }
     }
+}
+
+@Composable
+private fun HistorySearchBar(query: String, onQueryChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+        placeholder = { Text("Tìm điểm đến đã lưu...") },
+        singleLine = true,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.fillMaxWidth()
+    )
 }
 
 @Composable

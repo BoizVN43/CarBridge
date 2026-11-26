@@ -1,12 +1,16 @@
 package com.carmap.bridge
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -46,8 +50,10 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.carmap.bridge.data.BridgeRepository
 import com.carmap.bridge.launcher.MapIntentLauncher
 import com.carmap.bridge.model.DeviceRole
+import com.carmap.bridge.model.LinkKind
 import com.carmap.bridge.network.BlePermissionsHelper
 import com.carmap.bridge.network.CarBridgeConnectionManager
+import com.carmap.bridge.parser.MediaLinkHelper
 import com.carmap.bridge.service.BoxReceiverService
 import com.carmap.bridge.ui.components.AppUpdateDialog
 import com.carmap.bridge.ui.components.CockpitFloatingNavBar
@@ -58,6 +64,7 @@ import com.carmap.bridge.ui.screens.RoleSelectionScreen
 import com.carmap.bridge.ui.screens.SettingsScreen
 import com.carmap.bridge.ui.theme.CarMapTheme
 import com.carmap.bridge.update.AppUpdater
+import com.carmap.bridge.util.PairingCodeHelper
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -71,6 +78,31 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
         onBlePermResult?.invoke()
+    }
+
+    private var lastDismissedClipboard: String? = null
+    private val clipboardSuggestionState = mutableStateOf<String?>(null)
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            inspectClipboardForSuggestion()
+        }
+    }
+
+    private fun inspectClipboardForSuggestion() {
+        val state = BridgeRepository.state.value
+        if (!state.roleConfigured || state.role != DeviceRole.PHONE_SENDER) return
+        runCatching {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+            val clip = cm.primaryClip ?: return
+            if (clip.itemCount == 0) return
+            val text = clip.getItemAt(0)?.coerceToText(this)?.toString()?.trim().orEmpty()
+            if (text.isBlank() || text == lastDismissedClipboard) return
+            if (PairingCodeHelper.parsePairingUri(text) != null || MediaLinkHelper.isLikelyMapOrMediaLink(text)) {
+                clipboardSuggestionState.value = text
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,6 +120,7 @@ class MainActivity : ComponentActivity() {
             val state by BridgeRepository.state.collectAsState()
             val otaState by AppUpdater.state.collectAsState()
             val availableUpdate by AppUpdater.availableUpdate.collectAsState()
+            val clipboardSuggestion by clipboardSuggestionState
             val scope = rememberCoroutineScope()
             val lifecycleOwner = LocalLifecycleOwner.current
             var selectedTab by rememberSaveable { mutableIntStateOf(0) }
@@ -119,6 +152,7 @@ class MainActivity : ComponentActivity() {
                     if (event == Lifecycle.Event.ON_RESUME) {
                         canDrawOverlays = Settings.canDrawOverlays(this@MainActivity)
                         CarBridgeConnectionManager.probeNow()
+                        inspectClipboardForSuggestion()
                         scope.launch {
                             AppUpdater.checkForUpdate(
                                 context = this@MainActivity,
@@ -188,6 +222,20 @@ class MainActivity : ComponentActivity() {
                                     if (role == DeviceRole.PHONE_SENDER) {
                                         PhoneSenderScreen(
                                             state = state,
+                                            clipboardSuggestion = clipboardSuggestion,
+                                            onDismissClipboard = {
+                                                lastDismissedClipboard = clipboardSuggestion
+                                                clipboardSuggestionState.value = null
+                                            },
+                                            onAcceptClipboardPairing = { rawCode ->
+                                                PairingCodeHelper.parsePairingUri(rawCode)?.let { parsed ->
+                                                    if (parsed.pin.isNotBlank()) {
+                                                        BridgeRepository.updateSettings(pin = parsed.pin)
+                                                    }
+                                                    BridgeRepository.upsertDiscoveredBox(parsed.box)
+                                                    BridgeRepository.selectPairedBox(this@MainActivity, parsed.box)
+                                                }
+                                            },
                                             onSendLink = { rawText, target ->
                                                 scope.launch {
                                                     val targetBox = state.pairedBox ?: state.discoveredBoxes.firstOrNull()
@@ -205,6 +253,24 @@ class MainActivity : ComponentActivity() {
                                                         BridgeRepository.setStatusBanner(it.message ?: "Gửi thất bại")
                                                     }
                                                 }
+                                            },
+                                            onSendClipboardText = { text ->
+                                                scope.launch {
+                                                    CarBridgeConnectionManager.sendClipboardToBox(this@MainActivity, text)
+                                                }
+                                            },
+                                            onSendRemoteCommand = { cmd ->
+                                                scope.launch {
+                                                    CarBridgeConnectionManager.sendRemoteCommand(this@MainActivity, cmd)
+                                                }
+                                            },
+                                            onPingBox = {
+                                                scope.launch {
+                                                    CarBridgeConnectionManager.pingActiveBox(this@MainActivity)
+                                                }
+                                            },
+                                            onClearPendingQueue = {
+                                                CarBridgeConnectionManager.clearPendingOutbox()
                                             },
                                             onOpenSystemShareSheet = { rawText ->
                                                 val sendIntent = Intent(Intent.ACTION_SEND).apply {
@@ -225,24 +291,41 @@ class MainActivity : ComponentActivity() {
                                             },
                                             onOpenSettings = { selectedTab = 1 },
                                             onReplayRecord = { rec ->
-                                                val spec = MapIntentLauncher.buildLaunchSpec(
-                                                    context = this@MainActivity,
-                                                    parsed = rec.parsed,
-                                                    preferredTarget = rec.targetProvider
-                                                )
-                                                val openedReal = if (!state.simulatePreviewOnEmulator && spec.isPackageInstalled) {
-                                                    MapIntentLauncher.launchRealMapApp(this@MainActivity, spec)
-                                                } else {
-                                                    false
-                                                }
-                                                if (!openedReal) {
-                                                    NavigationDispatchActivity.launch(
-                                                        context = this@MainActivity,
-                                                        parsed = rec.parsed,
-                                                        spec = spec,
-                                                        senderName = rec.peerName,
-                                                        remoteIp = "Replay"
-                                                    )
+                                                when (rec.parsed.kind) {
+                                                    LinkKind.MEDIA -> {
+                                                        runCatching {
+                                                            startActivity(
+                                                                Intent(Intent.ACTION_VIEW, Uri.parse(rec.parsed.resolvedUrl))
+                                                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                            )
+                                                        }
+                                                    }
+                                                    LinkKind.CLIPBOARD -> {
+                                                        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                                        cm?.setPrimaryClip(ClipData.newPlainText("CarBridge", rec.parsed.rawInput))
+                                                        Toast.makeText(this@MainActivity, "Đã chép lại vào Clipboard", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                    else -> {
+                                                        val spec = MapIntentLauncher.buildLaunchSpec(
+                                                            context = this@MainActivity,
+                                                            parsed = rec.parsed,
+                                                            preferredTarget = rec.targetProvider
+                                                        )
+                                                        val openedReal = if (!state.simulatePreviewOnEmulator && spec.isPackageInstalled) {
+                                                            MapIntentLauncher.launchRealMapApp(this@MainActivity, spec)
+                                                        } else {
+                                                            false
+                                                        }
+                                                        if (!openedReal) {
+                                                            NavigationDispatchActivity.launch(
+                                                                context = this@MainActivity,
+                                                                parsed = rec.parsed,
+                                                                spec = spec,
+                                                                senderName = rec.peerName,
+                                                                remoteIp = "Replay"
+                                                            )
+                                                        }
+                                                    }
                                                 }
                                             }
                                         )

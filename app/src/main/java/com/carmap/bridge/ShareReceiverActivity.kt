@@ -57,6 +57,7 @@ import com.carmap.bridge.model.ParsedMapLink
 import com.carmap.bridge.network.BoxNetworkConstants
 import com.carmap.bridge.network.CarBridgeConnectionManager
 import com.carmap.bridge.parser.MapLinkResolver
+import com.carmap.bridge.parser.MediaLinkHelper
 import com.carmap.bridge.ui.components.CockpitPill
 import com.carmap.bridge.ui.theme.CarMapTheme
 import com.carmap.bridge.ui.theme.LocalCockpitAccents
@@ -108,7 +109,12 @@ class ShareReceiverActivity : ComponentActivity() {
 
             LaunchedEffect(fullInput) {
                 CarBridgeConnectionManager.probeNow()
-                val resolved = MapLinkResolver.resolveAndParse(fullInput)
+                val media = MediaLinkHelper.extractMediaLink(fullInput)
+                val resolved = if (media != null) {
+                    MediaLinkHelper.toParsedRecord(fullInput, media)
+                } else {
+                    MapLinkResolver.resolveAndParse(fullInput)
+                }
                 parsed = resolved
 
                 launch {
@@ -214,7 +220,11 @@ private fun ShareSheetDialog(
                 Icon(Icons.Default.DirectionsCar, contentDescription = null, tint = accents.emerald)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "Gửi bản đồ lên Android Box",
+                    if (parsed?.kind == com.carmap.bridge.model.LinkKind.MEDIA) {
+                        "Mở Media trên Android Box"
+                    } else {
+                        "Gửi bản đồ lên Android Box"
+                    },
                     color = MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
@@ -252,25 +262,27 @@ private fun ShareSheetDialog(
                 }
             }
 
-            Text("Mở trên Box bằng:", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                listOf(MapProvider.AUTO, MapProvider.GOOGLE_MAPS, MapProvider.WAZE, MapProvider.VIETMAP).forEach { target ->
-                    val selected = selectedTarget == target
-                    CockpitPill(
-                        onClick = { onSelectTarget(target) },
-                        shape = RoundedCornerShape(999.dp),
-                        color = if (selected) accents.emeraldContainer else MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Text(
-                            text = target.displayName,
-                            fontSize = 11.5.sp,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (selected) accents.emerald else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
+            if (parsed?.kind != com.carmap.bridge.model.LinkKind.MEDIA) {
+                Text("Mở trên Box bằng:", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(MapProvider.AUTO, MapProvider.GOOGLE_MAPS, MapProvider.WAZE, MapProvider.VIETMAP).forEach { target ->
+                        val selected = selectedTarget == target
+                        CockpitPill(
+                            onClick = { onSelectTarget(target) },
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (selected) accents.emeraldContainer else MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Text(
+                                text = target.displayName,
+                                fontSize = 11.5.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (selected) accents.emerald else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
                     }
                 }
             }
