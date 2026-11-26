@@ -540,7 +540,6 @@ class MainActivity : ComponentActivity() {
                                         installedMaps = installedMaps,
                                         bleStatus = bleStatus,
                                         availableUpdate = availableUpdate,
-                                        onSwitchRole = handleSelectRole,
                                         onCheckUpdate = {
                                             if (availableUpdate != null) {
                                                 AppUpdater.openUpdateDialog()

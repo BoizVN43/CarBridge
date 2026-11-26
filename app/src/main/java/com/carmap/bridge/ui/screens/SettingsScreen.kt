@@ -86,7 +86,6 @@ fun SettingsScreen(
     installedMaps: Map<MapProvider, Boolean>,
     bleStatus: BleStatus,
     availableUpdate: RemoteReleaseInfo?,
-    onSwitchRole: (DeviceRole) -> Unit,
     onCheckUpdate: () -> Unit,
     onToggleBoxService: (Boolean) -> Unit,
     onToggleAutoStartOnBoot: (Boolean) -> Unit,
@@ -162,7 +161,7 @@ fun SettingsScreen(
                             )
                         } else {
                             BoxIdentitySettingsCard(state, adaptive, onToggleBle)
-                            AppearanceAndRoleCard(state, accents, adaptive, onSwitchRole)
+                            AppearanceCard(state, adaptive)
                         }
                     }
                     Column(
@@ -178,7 +177,7 @@ fun SettingsScreen(
                                 accents = accents,
                                 onRequestBlePermissions = onRequestBlePermissions
                             )
-                            AppearanceAndRoleCard(state, accents, adaptive, onSwitchRole)
+                            AppearanceCard(state, adaptive)
                         } else {
                             AutoLaunchSettingsCard(state, accents, adaptive, onToggleBoxService, onToggleAutoStartOnBoot)
                             BoxPermissionsAndAppsCard(
@@ -259,7 +258,7 @@ fun SettingsScreen(
                         )
                     }
                 }
-                item { AppearanceAndRoleCard(state, accents, adaptive, onSwitchRole) }
+                item { AppearanceCard(state, adaptive) }
             }
         }
     }
@@ -332,13 +331,11 @@ private fun OtaUpdateCard(
 }
 
 @Composable
-private fun AppearanceAndRoleCard(
+private fun AppearanceCard(
     state: BridgeUiState,
-    accents: CockpitAccents,
-    adaptive: AdaptiveMetrics,
-    onSwitchRole: (DeviceRole) -> Unit
+    adaptive: AdaptiveMetrics
 ) {
-    SettingsGroupCard(title = "GIAO DIỆN & THIẾT BỊ") {
+    SettingsGroupCard(title = "GIAO DIỆN") {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
@@ -378,33 +375,6 @@ private fun AppearanceAndRoleCard(
                             maxLines = 1
                         )
                     }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = "Đổi vai trò thiết bị",
-            fontSize = adaptive.sp(11.5f),
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(5.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            DeviceRole.entries.forEach { role ->
-                val active = state.role == role
-                CockpitPill(
-                    onClick = { onSwitchRole(role) },
-                    shape = RoundedCornerShape(999.dp),
-                    color = if (active) accents.emeraldContainer else MaterialTheme.colorScheme.surfaceVariant
-                ) {
-                    Text(
-                        text = role.title,
-                        fontSize = adaptive.sp(11.5f),
-                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                        color = if (active) accents.emerald else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
-                    )
                 }
             }
         }

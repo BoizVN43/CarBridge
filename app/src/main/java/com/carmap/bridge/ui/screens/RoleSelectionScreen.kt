@@ -24,11 +24,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DirectionsCar
 import androidx.compose.material.icons.rounded.Smartphone
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,6 +59,50 @@ fun RoleSelectionScreen(
 ) {
     val accents = LocalCockpitAccents.current
     val adaptive = LocalAdaptiveMetrics.current
+    var pendingRole by remember { mutableStateOf<DeviceRole?>(null) }
+
+    pendingRole?.let { chosen ->
+        AlertDialog(
+            onDismissRequest = { pendingRole = null },
+            shape = RoundedCornerShape(22.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = {
+                Text(
+                    text = if (chosen == DeviceRole.PHONE_SENDER) "Xác nhận: Điện thoại" else "Xác nhận: Android Box",
+                    fontWeight = FontWeight.ExtraBold
+                )
+            },
+            text = {
+                Text(
+                    text = if (chosen == DeviceRole.PHONE_SENDER) {
+                        "Thiết bị này sẽ được cố định ở chế độ Điện thoại (Gửi bản đồ) và không thể đổi lại trong Cài đặt."
+                    } else {
+                        "Thiết bị này sẽ được cố định ở chế độ Android Box trên xe (Nhận bản đồ) và không thể đổi lại trong Cài đặt."
+                    }
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingRole = null
+                        onSelectRole(chosen)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accents.emerald,
+                        contentColor = Color(0xFF042116)
+                    ),
+                    shape = RoundedCornerShape(999.dp)
+                ) {
+                    Text("Xác nhận", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRole = null }) {
+                    Text("Chọn lại")
+                }
+            }
+        )
+    }
 
     Box(
         modifier = Modifier
@@ -110,7 +162,7 @@ fun RoleSelectionScreen(
                         accents = accents,
                         adaptive = adaptive,
                         modifier = Modifier.weight(1f),
-                        onClick = { onSelectRole(DeviceRole.PHONE_SENDER) }
+                        onClick = { pendingRole = DeviceRole.PHONE_SENDER }
                     )
                     RoleChoiceCard(
                         icon = Icons.Rounded.DirectionsCar,
@@ -122,7 +174,7 @@ fun RoleSelectionScreen(
                         accents = accents,
                         adaptive = adaptive,
                         modifier = Modifier.weight(1f),
-                        onClick = { onSelectRole(DeviceRole.CAR_BOX_RECEIVER) }
+                        onClick = { pendingRole = DeviceRole.CAR_BOX_RECEIVER }
                     )
                 }
             } else {
@@ -136,7 +188,7 @@ fun RoleSelectionScreen(
                     accents = accents,
                     adaptive = adaptive,
                     modifier = Modifier.fillMaxWidth(),
-                    onClick = { onSelectRole(DeviceRole.PHONE_SENDER) }
+                    onClick = { pendingRole = DeviceRole.PHONE_SENDER }
                 )
                 RoleChoiceCard(
                     icon = Icons.Rounded.DirectionsCar,
@@ -148,12 +200,12 @@ fun RoleSelectionScreen(
                     accents = accents,
                     adaptive = adaptive,
                     modifier = Modifier.fillMaxWidth(),
-                    onClick = { onSelectRole(DeviceRole.CAR_BOX_RECEIVER) }
+                    onClick = { pendingRole = DeviceRole.CAR_BOX_RECEIVER }
                 )
             }
 
             Text(
-                text = "Bạn vẫn có thể đổi lại vai trò thiết bị bất cứ lúc nào trong Cài đặt.",
+                text = "Lựa chọn này sẽ cố định mặc định cho thiết bị (muốn đổi lại cần xóa dữ liệu ứng dụng).",
                 fontSize = adaptive.sp(11.5f),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
