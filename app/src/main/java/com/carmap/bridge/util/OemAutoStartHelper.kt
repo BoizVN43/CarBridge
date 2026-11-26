@@ -9,13 +9,16 @@ import android.widget.Toast
 
 object OemAutoStartHelper {
     private val oemIntents = listOf(
-        // Car Android Box ROMs (FYT / SYU / Topway TS10 / Qualcomm Box)
+        // Car Android Box / Headunit ROMs (FYT / SYU / Topway TS10 / Carlinkit / TBox / XYAuto)
         ComponentName("com.syu.settings", "com.syu.settings.AutoStartActivity"),
         ComponentName("com.ts.MainUI", "com.ts.set.SetBootAppActivity"),
-        ComponentName("com.android.settings", "com.android.settings.Settings\$AppAndNotificationDashboardActivity"),
+        ComponentName("com.xyauto.Settings", "com.xyauto.Settings.AutoStartActivity"),
+        ComponentName("com.carlinkit.autokit", "com.carlinkit.autokit.AutoStartActivity"),
+        ComponentName("com.tw.settings", "com.tw.settings.AutoStartActivity"),
         // Phone / Tablet OEM ROMs
         ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"),
         ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"),
+        ComponentName("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity"),
         ComponentName("com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity"),
         ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"),
         ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"),

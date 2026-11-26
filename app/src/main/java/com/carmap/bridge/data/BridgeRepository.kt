@@ -16,6 +16,7 @@ import com.carmap.bridge.model.ParkingPin
 import com.carmap.bridge.model.SavedPlace
 import com.carmap.bridge.model.SharedTransferRecord
 import com.carmap.bridge.model.ThemeMode
+import com.carmap.bridge.model.TransportChannel
 import com.carmap.bridge.network.BoxNetworkConstants
 import com.carmap.bridge.widget.CarBridgeWidgetProvider
 import kotlinx.coroutines.CoroutineScope
@@ -47,6 +48,11 @@ data class BridgeUiState(
     val bleScanning: Boolean = false,
     val preferBleOverLan: Boolean = false,
     val proximityOnly2m: Boolean = false,
+    val autoConnectOnCarBt: Boolean = true,
+    val lastKnownLanHost: String? = null,
+    val lastKnownLanPort: Int = BoxNetworkConstants.TCP_PORT,
+    val lastKnownBleAddress: String? = null,
+    val lastAutoConnectNote: String? = null,
     val autoOpenOnBox: Boolean = true,
     val simulatePreviewOnEmulator: Boolean = false,
     val boxPreferredTarget: MapProvider = MapProvider.AUTO,
@@ -152,6 +158,30 @@ object BridgeRepository {
         persistConfig()
     }
 
+    fun setAutoConnectOnCarBt(enabled: Boolean) {
+        _state.update { it.copy(autoConnectOnCarBt = enabled) }
+        persistConfig()
+    }
+
+    fun recordAutoConnectNote(triggerLabel: String) {
+        val ctx = appContext
+        val fmt = java.text.SimpleDateFormat("HH:mm dd/MM", java.util.Locale.getDefault())
+        val note = "${fmt.format(java.util.Date())} ($triggerLabel)"
+        _state.update { it.copy(lastAutoConnectNote = note) }
+        if (ctx != null) {
+            ioScope.launch { AppPreferences.recordAutoConnectEvent(ctx, triggerLabel) }
+        }
+    }
+
+    fun rememberLanEndpoint(host: String, port: Int = BoxNetworkConstants.TCP_PORT) {
+        val clean = host.trim()
+        if (clean.isBlank() || clean == "127.0.0.1") return
+        val cur = _state.value
+        if (cur.lastKnownLanHost == clean && cur.lastKnownLanPort == port) return
+        _state.update { it.copy(lastKnownLanHost = clean, lastKnownLanPort = port) }
+        persistConfig()
+    }
+
     fun setBoxServiceRunning(running: Boolean) {
         _state.update { current ->
             val localDemo = DiscoveredBox(
@@ -202,6 +232,7 @@ object BridgeRepository {
         if (existing != null && distUnchanged && cur.pairedBox != null) return
 
         val normalizedBox = box.copy(lastSeenMs = 0L)
+        var endpointsChanged = false
         _state.update { current ->
             val filtered = current.discoveredBoxes.filterNot {
                 (it.channel == normalizedBox.channel && it.host == normalizedBox.host && it.port == normalizedBox.port) ||
@@ -211,9 +242,40 @@ object BridgeRepository {
             val updatedPaired = when {
                 current.pairedBox == null -> normalizedBox
                 current.pairedBox.id == normalizedBox.id && current.pairedBox.channel == normalizedBox.channel -> normalizedBox
+                // Auto-upgrade from BLE (or manual) to live LAN when both are present unless preferBleOverLan is on
+                !current.preferBleOverLan &&
+                    current.pairedBox.channel == TransportChannel.BLE &&
+                    normalizedBox.channel == TransportChannel.LAN &&
+                    !normalizedBox.isLocalDemo -> normalizedBox
                 else -> current.pairedBox
             }
-            current.copy(discoveredBoxes = updated, pairedBox = updatedPaired)
+            val nextLanHost = if (!normalizedBox.isLocalDemo &&
+                normalizedBox.channel == TransportChannel.LAN &&
+                normalizedBox.host.isNotBlank() &&
+                normalizedBox.host != "127.0.0.1"
+            ) normalizedBox.host else current.lastKnownLanHost
+            val nextLanPort = if (!normalizedBox.isLocalDemo && normalizedBox.channel == TransportChannel.LAN) {
+                normalizedBox.port
+            } else current.lastKnownLanPort
+            val nextBleAddr = if (!normalizedBox.bleAddress.isNullOrBlank()) {
+                normalizedBox.bleAddress
+            } else current.lastKnownBleAddress
+
+            endpointsChanged = nextLanHost != current.lastKnownLanHost ||
+                nextLanPort != current.lastKnownLanPort ||
+                nextBleAddr != current.lastKnownBleAddress ||
+                (updatedPaired != current.pairedBox && !normalizedBox.isLocalDemo)
+
+            current.copy(
+                discoveredBoxes = updated,
+                pairedBox = updatedPaired,
+                lastKnownLanHost = nextLanHost,
+                lastKnownLanPort = nextLanPort,
+                lastKnownBleAddress = nextBleAddr
+            )
+        }
+        if (endpointsChanged) {
+            persistConfig()
         }
     }
 
@@ -295,7 +357,20 @@ object BridgeRepository {
     }
 
     fun selectPairedBox(context: Context, box: DiscoveredBox) {
-        _state.update { it.copy(pairedBox = box, lastStatusBanner = "Đã chọn Box: ${box.name}") }
+        _state.update { cur ->
+            val nextLanHost = if (!box.isLocalDemo && box.channel == TransportChannel.LAN && box.host.isNotBlank() && box.host != "127.0.0.1") {
+                box.host
+            } else cur.lastKnownLanHost
+            val nextLanPort = if (!box.isLocalDemo && box.channel == TransportChannel.LAN) box.port else cur.lastKnownLanPort
+            val nextBleAddr = if (!box.bleAddress.isNullOrBlank()) box.bleAddress else cur.lastKnownBleAddress
+            cur.copy(
+                pairedBox = box,
+                lastKnownLanHost = nextLanHost,
+                lastKnownLanPort = nextLanPort,
+                lastKnownBleAddress = nextBleAddr,
+                lastStatusBanner = "Đã chọn Box: ${box.name}"
+            )
+        }
         pushDirectShareShortcut(context, box)
         persistConfig()
     }

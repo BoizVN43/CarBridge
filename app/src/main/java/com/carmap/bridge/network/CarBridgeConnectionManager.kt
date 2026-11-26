@@ -71,6 +71,9 @@ object CarBridgeConnectionManager {
     @Volatile
     private var pendingOutbox: PendingSendItem? = null
     private val flushing = AtomicBoolean(false)
+    private val autoConnectBusy = AtomicBoolean(false)
+    @Volatile
+    private var lastBgAutoConnectMs = 0L
     private val activeConnectedBoxId = AtomicReference<String?>(null)
 
     fun init(context: Context) {
@@ -149,7 +152,8 @@ object CarBridgeConnectionManager {
         val state = BridgeRepository.state.value
         val bleEnabled = state.bleEnabled || state.proximityOnly2m
         client?.startDiscovery(enableBle = bleEnabled)
-        client?.sendActiveProbe()
+        client?.sendActiveProbe(listOfNotNull(state.lastKnownLanHost))
+        scope.launch { fastReconnectSavedEndpoints(context.applicationContext) }
         startPruneLoop()
     }
 
@@ -168,7 +172,101 @@ object CarBridgeConnectionManager {
     }
 
     fun probeNow() {
-        client?.sendActiveProbe()
+        client?.sendActiveProbe(listOfNotNull(BridgeRepository.state.value.lastKnownLanHost))
+    }
+
+    suspend fun fastReconnectSavedEndpoints(context: Context): DiscoveredBox? {
+        init(context)
+        val state = BridgeRepository.state.value
+        val c = client ?: return null
+
+        val proximityAllowsLan = !state.proximityOnly2m || c.hasRecentNearbyBleSighting()
+        val lanHost = state.lastKnownLanHost
+            ?: state.pairedBox?.takeIf { it.channel == TransportChannel.LAN && !it.isLocalDemo }?.host
+        val lanPort = state.lastKnownLanPort
+
+        if (proximityAllowsLan && !lanHost.isNullOrBlank()) {
+            val foundLan = c.probeDirectLanBox(lanHost, lanPort)
+            if (foundLan != null) {
+                val enriched = if (state.proximityOnly2m) {
+                    foundLan.copy(estimatedDistanceMeters = c.nearestBleDistanceMeters())
+                } else foundLan
+                BridgeRepository.upsertDiscoveredBox(enriched)
+                onBoxSeenOnline(context, enriched)
+                tryFlushPendingOutbox()
+                return enriched
+            }
+        }
+
+        c.sendActiveProbe(listOfNotNull(lanHost))
+
+        val bleAddr = state.lastKnownBleAddress
+            ?: state.pairedBox?.bleAddress
+        if (!bleAddr.isNullOrBlank() && (state.bleEnabled || state.proximityOnly2m)) {
+            val bleBox = DiscoveredBox(
+                id = "ble-$bleAddr",
+                name = state.pairedBox?.name ?: "Android Box (BLE)",
+                host = bleAddr,
+                port = 0,
+                channel = TransportChannel.BLE,
+                bleAddress = bleAddr
+            )
+            var discoveredLanFromBle: String? = null
+            val pingRes = c.pingBox(bleBox) { lanIp ->
+                discoveredLanFromBle = lanIp
+            }
+            if (pingRes.isSuccess) {
+                if (!discoveredLanFromBle.isNullOrBlank()) {
+                    BridgeRepository.rememberLanEndpoint(discoveredLanFromBle!!, BoxNetworkConstants.TCP_PORT)
+                    val upgradedLan = c.probeDirectLanBox(discoveredLanFromBle!!, BoxNetworkConstants.TCP_PORT)
+                    if (upgradedLan != null) {
+                        BridgeRepository.upsertDiscoveredBox(upgradedLan)
+                        onBoxSeenOnline(context, upgradedLan)
+                        tryFlushPendingOutbox()
+                        return upgradedLan
+                    }
+                }
+                BridgeRepository.upsertDiscoveredBox(bleBox)
+                onBoxSeenOnline(context, bleBox)
+                tryFlushPendingOutbox()
+                return bleBox
+            }
+        }
+        return null
+    }
+
+    suspend fun triggerBackgroundAutoConnect(context: Context, trigger: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastBgAutoConnectMs < 12_000L) return
+        if (!autoConnectBusy.compareAndSet(false, true)) return
+        lastBgAutoConnectMs = now
+        try {
+            init(context)
+            var found = fastReconnectSavedEndpoints(context)
+            if (found == null) {
+                val state = BridgeRepository.state.value
+                val needTempScan = activeConsumers == 0
+                if (needTempScan) {
+                    client?.startDiscovery(enableBle = state.bleEnabled || state.proximityOnly2m)
+                }
+                client?.sendActiveProbe(listOfNotNull(state.lastKnownLanHost))
+                repeat(10) {
+                    delay(500L)
+                    found = BridgeRepository.state.value.discoveredBoxes.firstOrNull { !it.isLocalDemo }
+                    if (found != null) return@repeat
+                }
+                if (needTempScan && activeConsumers == 0) {
+                    client?.stopDiscovery()
+                }
+            }
+            found?.let { box ->
+                BridgeRepository.recordAutoConnectNote("$trigger · ${box.channel.label}")
+                onBoxSeenOnline(context, box)
+                tryFlushPendingOutbox()
+            }
+        } finally {
+            autoConnectBusy.set(false)
+        }
     }
 
     fun clearPendingOutbox() {
@@ -226,7 +324,14 @@ object CarBridgeConnectionManager {
         val state = BridgeRepository.state.value
         val box = state.pairedBox ?: state.discoveredBoxes.firstOrNull()
             ?: return Result.failure(IllegalStateException("Chưa có Android Box nào để Ping"))
-        val res = client?.pingBox(box) ?: Result.failure(IllegalStateException("Chưa khởi tạo kết nối"))
+        val res = client?.pingBox(box) { lanIp ->
+            BridgeRepository.rememberLanEndpoint(lanIp, BoxNetworkConstants.TCP_PORT)
+            scope.launch {
+                client?.probeDirectLanBox(lanIp, BoxNetworkConstants.TCP_PORT)?.let { lanBox ->
+                    BridgeRepository.upsertDiscoveredBox(lanBox)
+                }
+            }
+        } ?: Result.failure(IllegalStateException("Chưa khởi tạo kết nối"))
         res.onSuccess { (channel, rttMs) ->
             onBoxSeenOnline(context, box)
             val summary = "$channel · ${rttMs}ms"
@@ -255,6 +360,9 @@ object CarBridgeConnectionManager {
             rawText = clean,
             preferredTarget = MapProvider.AUTO,
             action = BridgeAction.CLIPBOARD,
+            fallbackLanHost = state.lastKnownLanHost,
+            fallbackLanPort = state.lastKnownLanPort,
+            fallbackBleAddress = state.lastKnownBleAddress,
             onWorkingBoxResolved = { BridgeRepository.selectPairedBox(context, it) }
         ) ?: Result.failure(IllegalStateException("Chưa khởi tạo kết nối"))
         res.onSuccess {
@@ -279,6 +387,9 @@ object CarBridgeConnectionManager {
             rawText = "PULL",
             preferredTarget = MapProvider.AUTO,
             action = BridgeAction.PULL_CLIPBOARD,
+            fallbackLanHost = state.lastKnownLanHost,
+            fallbackLanPort = state.lastKnownLanPort,
+            fallbackBleAddress = state.lastKnownBleAddress,
             onWorkingBoxResolved = { BridgeRepository.selectPairedBox(context, it) }
         ) ?: Result.failure(IllegalStateException("Chưa khởi tạo kết nối"))
 
@@ -391,11 +502,19 @@ object CarBridgeConnectionManager {
         }
         val resolvedUrl = parsed.resolvedUrl
         val state = BridgeRepository.state.value
-        val box = primaryBox ?: state.pairedBox ?: state.discoveredBoxes.firstOrNull()
+        val box = primaryBox ?: state.pairedBox ?: state.discoveredBoxes.firstOrNull() ?: run {
+            if (!state.proximityOnly2m) {
+                state.lastKnownLanHost?.let { host ->
+                    DiscoveredBox("saved-$host", state.boxName, host, state.lastKnownLanPort, TransportChannel.LAN, state.lastKnownBleAddress)
+                } ?: state.lastKnownBleAddress?.let { addr ->
+                    DiscoveredBox("ble-$addr", state.boxName, addr, 0, TransportChannel.BLE, addr)
+                }
+            } else null
+        }
 
         if (box == null) {
             saveQueue(PendingSendItem(rawText, resolvedUrl, parsed, preferredTarget, action))
-            client?.sendActiveProbe()
+            client?.sendActiveProbe(listOfNotNull(state.lastKnownLanHost))
             return Result.failure(IllegalStateException("Chưa thấy Box — đã xếp hàng Smart Queue, sẽ tự gửi ngay khi lên xe"))
         }
 
@@ -409,6 +528,9 @@ object CarBridgeConnectionManager {
             resolvedUrl = resolvedUrl,
             preferredTarget = preferredTarget,
             action = action,
+            fallbackLanHost = if (state.proximityOnly2m) null else state.lastKnownLanHost,
+            fallbackLanPort = state.lastKnownLanPort,
+            fallbackBleAddress = if (state.proximityOnly2m) null else state.lastKnownBleAddress,
             onWorkingBoxResolved = { working ->
                 BridgeRepository.selectPairedBox(context, working)
             }
@@ -464,6 +586,9 @@ object CarBridgeConnectionManager {
                     resolvedUrl = pending.resolvedUrl,
                     preferredTarget = pending.preferredTarget,
                     action = pending.action,
+                    fallbackLanHost = state.lastKnownLanHost,
+                    fallbackLanPort = state.lastKnownLanPort,
+                    fallbackBleAddress = state.lastKnownBleAddress,
                     onWorkingBoxResolved = { working -> BridgeRepository.selectPairedBox(ctx, working) }
                 )
                 if (res?.isSuccess == true) {
@@ -484,8 +609,16 @@ object CarBridgeConnectionManager {
                 BridgeRepository.pruneStaleBoxes(maxAgeMs = 14_000L)
                 val ctx = appContext
                 val state = BridgeRepository.state.value
-                val stillHasOnlineBox = state.discoveredBoxes.any { !it.isLocalDemo }
+                var stillHasOnlineBox = state.discoveredBoxes.any { !it.isLocalDemo }
                 val elapsedSinceStart = System.currentTimeMillis() - discoveryStartedAtMs
+                // Verify saved LAN endpoint with a sub-100ms unicast PING before declaring disconnect (prevents false Parking Pin!)
+                if (!stillHasOnlineBox && !state.proximityOnly2m && !state.lastKnownLanHost.isNullOrBlank()) {
+                    val alive = client?.probeDirectLanBox(state.lastKnownLanHost, state.lastKnownLanPort)
+                    if (alive != null) {
+                        BridgeRepository.upsertDiscoveredBox(alive)
+                        stillHasOnlineBox = true
+                    }
+                }
                 // Save battery: step down BLE scan to BALANCED once Box is stably online after 10s
                 if (state.bleEnabled || state.proximityOnly2m) {
                     val shouldUseBalanced = stillHasOnlineBox && elapsedSinceStart >= 10_000L
@@ -513,14 +646,20 @@ object CarBridgeConnectionManager {
                 .build()
             val cb = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
-                    if (activeConsumers > 0) client?.restartNsdAndProbe()
+                    if (activeConsumers > 0) {
+                        client?.restartNsdAndProbe()
+                        scope.launch { fastReconnectSavedEndpoints(context) }
+                    }
                     scope.launch {
                         runCatching { AppUpdater.checkForUpdate(context, silent = true, autoShowDialog = false) }
                     }
                 }
 
                 override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
-                    if (activeConsumers > 0) client?.restartNsdAndProbe()
+                    if (activeConsumers > 0) {
+                        client?.restartNsdAndProbe()
+                        scope.launch { fastReconnectSavedEndpoints(context) }
+                    }
                 }
             }
             networkCallback = cb

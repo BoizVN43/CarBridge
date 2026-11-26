@@ -1,14 +1,18 @@
 package com.carmap.bridge.service
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.bluetooth.BluetoothAdapter
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.LinkProperties
@@ -16,9 +20,11 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
@@ -36,6 +42,7 @@ import com.carmap.bridge.network.BlePermissionsHelper
 import com.carmap.bridge.network.BoxNetworkConstants
 import com.carmap.bridge.network.BoxServerTransport
 import com.carmap.bridge.network.IncomingMapPacket
+import com.carmap.bridge.network.LanBroadcastHelper
 import com.carmap.bridge.parser.MapLinkResolver
 import com.carmap.bridge.parser.MediaLinkHelper
 import com.carmap.bridge.update.AppUpdater
@@ -44,6 +51,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -53,12 +61,15 @@ class BoxReceiverService : Service() {
     private var lanTransport: BoxServerTransport? = null
     private var bleTransport: BleBoxServerTransport? = null
     private var wifiNetworkCallback: ConnectivityManager.NetworkCallback? = null
+    private var radioWakeReceiver: BroadcastReceiver? = null
     private var receivedCount: Int = 0
     private var lastReceivedSummary: String? = null
     private var bleActiveNow: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
+        runCatching { BridgeRepository.init(this) }
         createNotificationChannel()
         val notification = buildNotification("Đang chờ link bản đồ từ điện thoại...")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -121,10 +132,90 @@ class BoxReceiverService : Service() {
             if (BridgeRepository.state.value.bleEnabled) {
                 ble.start()
             }
+            // Box boot warmup: Wi-Fi & Bluetooth chips on Android Boxes often initialize 3–20s after boot.
+            // Retry BLE advertising & LAN beacon bursts automatically so Phone connects the instant radios are up.
+            for (waitMs in longArrayOf(2_000L, 4_000L, 7_000L, 12_000L)) {
+                delay(waitMs)
+                if (!isRunning) break
+                if (BridgeRepository.state.value.bleEnabled && !ble.isAdvertising) {
+                    ble.start()
+                }
+                lan.sendImmediateBeaconBurst()
+            }
         }
 
         registerWifiNetworkCallback()
+        registerRadioWakeReceiver()
         BridgeRepository.setBoxServiceRunning(true)
+    }
+
+    private fun registerRadioWakeReceiver() {
+        runCatching {
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(ctx: Context, intent: Intent?) {
+                    when (intent?.action) {
+                        BluetoothAdapter.ACTION_STATE_CHANGED -> {
+                            val st = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                            if (st == BluetoothAdapter.STATE_ON && BridgeRepository.state.value.bleEnabled) {
+                                serviceScope.launch(Dispatchers.IO) {
+                                    delay(500L)
+                                    bleTransport?.start()
+                                }
+                            } else if (st == BluetoothAdapter.STATE_OFF) {
+                                bleTransport?.stop()
+                            }
+                        }
+                        WifiManager.WIFI_STATE_CHANGED_ACTION -> {
+                            val st = intent.getIntExtra(WifiManager.EXTRA_WIFI_STATE, WifiManager.WIFI_STATE_UNKNOWN)
+                            if (st == WifiManager.WIFI_STATE_ENABLED) {
+                                lanTransport?.sendImmediateBeaconBurst()
+                            }
+                        }
+                        Intent.ACTION_SCREEN_ON -> {
+                            // Box waking from ACC sleep: re-announce on LAN & ensure BLE is advertising
+                            serviceScope.launch(Dispatchers.IO) {
+                                if (BridgeRepository.state.value.bleEnabled && bleTransport?.isAdvertising != true) {
+                                    bleTransport?.start()
+                                }
+                                lanTransport?.sendImmediateBeaconBurst()
+                            }
+                        }
+                    }
+                }
+            }
+            val filter = IntentFilter().apply {
+                addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+                addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
+                addAction(Intent.ACTION_SCREEN_ON)
+            }
+            radioWakeReceiver = receiver
+            registerReceiver(receiver, filter)
+        }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        if (BridgeRepository.state.value.autoStartOnBoot) {
+            // Survive "Clear All Recents" on Android Box ROMs
+            BoxWatchdogJobService.triggerImmediate(this, delayMs = 1_500L)
+            runCatching {
+                val restartIntent = Intent(this, BootReceiver::class.java).apply {
+                    action = BootReceiver.ACTION_SERVICE_RESTART
+                }
+                val pi = PendingIntent.getBroadcast(
+                    this,
+                    48291,
+                    restartIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val am = getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                am?.setAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + 2_000L,
+                    pi
+                )
+            }
+        }
     }
 
     private fun registerWifiNetworkCallback() {
@@ -164,7 +255,8 @@ class BoxReceiverService : Service() {
         transportUsed: String
     ): Pair<Boolean, String> {
         if (packet.action == BridgeAction.PING) {
-            return true to "PONG"
+            val lanIp = LanBroadcastHelper.localIpv4Address().orEmpty()
+            return true to if (lanIp.isNotBlank()) "PONG|$lanIp" else "PONG"
         }
 
         val state = BridgeRepository.state.value
@@ -436,6 +528,11 @@ class BoxReceiverService : Service() {
     }
 
     override fun onDestroy() {
+        isRunning = false
+        runCatching {
+            radioWakeReceiver?.let { unregisterReceiver(it) }
+        }
+        radioWakeReceiver = null
         runCatching {
             wifiNetworkCallback?.let {
                 (getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager)?.unregisterNetworkCallback(it)
@@ -512,6 +609,10 @@ class BoxReceiverService : Service() {
     }
 
     companion object {
+        @Volatile
+        var isRunning: Boolean = false
+            private set
+
         private const val CHANNEL_ID = "carmap_box_receiver"
         private const val NOTIF_ID = 4829
         private const val ACTION_REFRESH_BLE = "com.carmap.bridge.REFRESH_BLE"

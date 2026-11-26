@@ -108,6 +108,7 @@ class ShareReceiverActivity : ComponentActivity() {
             }
 
             LaunchedEffect(fullInput) {
+                launch { CarBridgeConnectionManager.fastReconnectSavedEndpoints(this@ShareReceiverActivity) }
                 CarBridgeConnectionManager.probeNow()
                 val media = MediaLinkHelper.extractMediaLink(fullInput)
                 val web = if (media == null) MediaLinkHelper.extractGenericWebLink(fullInput) else null
@@ -321,17 +322,24 @@ private fun ShareSheetDialog(
                 }
                 Button(
                     onClick = onSend,
-                    enabled = activeBox != null && !sending && rawInput.isNotBlank(),
+                    enabled = !sending && rawInput.isNotBlank(),
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.weight(1.4f),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF10B981),
+                        containerColor = if (activeBox != null) Color(0xFF10B981) else Color(0xFFF59E0B),
                         contentColor = Color.White
                     )
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text(if (sending) "Đang gửi..." else "Gửi ngay", fontWeight = FontWeight.Bold)
+                    Text(
+                        when {
+                            sending -> "Đang gửi..."
+                            activeBox != null -> "Gửi ngay"
+                            else -> "Xếp hàng Smart Queue"
+                        },
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }

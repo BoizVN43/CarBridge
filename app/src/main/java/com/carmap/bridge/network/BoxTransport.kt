@@ -93,6 +93,27 @@ internal object LanBroadcastHelper {
         return result.toList()
     }
 
+    fun subnetGatewayCandidates(): List<String> {
+        val out = linkedSetOf<String>()
+        runCatching {
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return@runCatching
+            for (intf in interfaces) {
+                if (!intf.isUp || intf.isLoopback) continue
+                for (addr in intf.inetAddresses) {
+                    if (addr is Inet4Address && !addr.isLoopbackAddress) {
+                        val ip = addr.hostAddress ?: continue
+                        val parts = ip.split('.')
+                        if (parts.size == 4) {
+                            val gw = "${parts[0]}.${parts[1]}.${parts[2]}.1"
+                            if (gw != ip) out.add(gw)
+                        }
+                    }
+                }
+            }
+        }
+        return out.toList()
+    }
+
     fun isLocalDeviceIp(ip: String): Boolean {
         if (ip == "127.0.0.1") return true
         return runCatching {
@@ -543,7 +564,7 @@ class PhoneDiscoveryAndClient(
         }
     }
 
-    fun sendActiveProbe() {
+    fun sendActiveProbe(extraUnicastHosts: List<String> = emptyList()) {
         scope.launch(Dispatchers.IO) {
             val probeBytes = """{"type":"CARMAP_PROBE"}""".toByteArray(Charsets.UTF_8)
             runCatching {
@@ -554,9 +575,55 @@ class PhoneDiscoveryAndClient(
                             ds.send(DatagramPacket(probeBytes, probeBytes.size, target, BoxNetworkConstants.UDP_PROBE_PORT))
                         }
                     }
+                    val unicastHosts = (extraUnicastHosts + LanBroadcastHelper.subnetGatewayCandidates())
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() && it != "127.0.0.1" }
+                        .distinct()
+                    for (host in unicastHosts) {
+                        runCatching {
+                            val addr = InetAddress.getByName(host)
+                            ds.send(DatagramPacket(probeBytes, probeBytes.size, addr, BoxNetworkConstants.UDP_PROBE_PORT))
+                        }
+                    }
                 }
             }
         }
+    }
+
+    suspend fun probeDirectLanBox(
+        host: String,
+        port: Int = BoxNetworkConstants.TCP_PORT
+    ): DiscoveredBox? = withContext(Dispatchers.IO) {
+        val cleanHost = host.trim()
+        if (cleanHost.isBlank() || (cleanHost != "127.0.0.1" && LanBroadcastHelper.isLocalDeviceIp(cleanHost))) {
+            return@withContext null
+        }
+        runCatching {
+            Socket().use { socket ->
+                socket.tcpNoDelay = true
+                socket.connect(InetSocketAddress(cleanHost, port), 900)
+                socket.soTimeout = 1200
+                val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8))
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+                writer.write("""{"type":"PING"}""")
+                writer.newLine()
+                writer.flush()
+                val respStr = reader.readLine() ?: return@withContext null
+                val resp = JSONObject(respStr)
+                if (!resp.optBoolean("ok", false)) return@withContext null
+                val boxId = resp.optString("id", "").takeIf { it.isNotBlank() } ?: "direct-$cleanHost"
+                if (boxId == selfInstanceIdProvider()) return@withContext null
+                val boxName = resp.optString("boxName", "Android Box ($cleanHost)").ifBlank { "Android Box" }
+                DiscoveredBox(
+                    id = boxId,
+                    name = boxName,
+                    host = cleanHost,
+                    port = port,
+                    channel = TransportChannel.LAN,
+                    isLocalDemo = cleanHost == "127.0.0.1"
+                )
+            }
+        }.getOrNull()
     }
 
     fun restartNsdAndProbe() {
@@ -660,7 +727,10 @@ class PhoneDiscoveryAndClient(
         }
     }
 
-    suspend fun pingBox(box: DiscoveredBox): Result<Pair<String, Long>> = withContext(Dispatchers.IO) {
+    suspend fun pingBox(
+        box: DiscoveredBox,
+        onDiscoveredLanIpFromBle: (String) -> Unit = {}
+    ): Result<Pair<String, Long>> = withContext(Dispatchers.IO) {
         val start = System.currentTimeMillis()
         if (box.channel == TransportChannel.BLE && !box.bleAddress.isNullOrBlank()) {
             val res = bleClient.sendToBox(
@@ -673,6 +743,12 @@ class PhoneDiscoveryAndClient(
                 action = BridgeAction.PING
             )
             val rtt = (System.currentTimeMillis() - start).coerceAtLeast(1L)
+            res.onSuccess { pongMsg ->
+                val lanIp = pongMsg.substringAfter("PONG|", "").trim()
+                if (lanIp.isNotBlank() && lanIp != "127.0.0.1") {
+                    onDiscoveredLanIpFromBle(lanIp)
+                }
+            }
             return@withContext res.map { "BLE" to rtt }
         }
         runCatching {
@@ -704,17 +780,40 @@ class PhoneDiscoveryAndClient(
         resolvedUrl: String = "",
         preferredTarget: MapProvider,
         action: BridgeAction = BridgeAction.MAP,
+        fallbackLanHost: String? = null,
+        fallbackLanPort: Int = BoxNetworkConstants.TCP_PORT,
+        fallbackBleAddress: String? = null,
         onWorkingBoxResolved: (DiscoveredBox) -> Unit = {}
     ): Result<String> {
-        // Build ordered candidate list: handle DHCP IP change by matching box.id!
+        // Build ordered candidate list: handle DHCP IP change by matching box.id + remembered dual endpoints!
         val matchingLanById = discoveredBoxes.firstOrNull {
             it.channel == TransportChannel.LAN && it.id == primaryBox.id && it.host != primaryBox.host
         }
         val anyLan = discoveredBoxes.firstOrNull { it.channel == TransportChannel.LAN }
-        val bleCandidate = if (primaryBox.channel == TransportChannel.BLE) {
+        val rememberedLan = fallbackLanHost?.takeIf { it.isNotBlank() && it != "127.0.0.1" }?.let { host ->
+            DiscoveredBox(
+                id = primaryBox.id,
+                name = primaryBox.name,
+                host = host,
+                port = fallbackLanPort,
+                channel = TransportChannel.LAN,
+                bleAddress = fallbackBleAddress
+            )
+        }
+        val bleCandidate = if (primaryBox.channel == TransportChannel.BLE && !primaryBox.bleAddress.isNullOrBlank()) {
             primaryBox
         } else {
             discoveredBoxes.firstOrNull { it.channel == TransportChannel.BLE && !it.bleAddress.isNullOrBlank() }
+                ?: fallbackBleAddress?.takeIf { it.isNotBlank() }?.let { addr ->
+                    DiscoveredBox(
+                        id = "ble-$addr",
+                        name = "${primaryBox.name} (BLE)",
+                        host = addr,
+                        port = 0,
+                        channel = TransportChannel.BLE,
+                        bleAddress = addr
+                    )
+                }
         }
 
         val orderedCandidates = buildList {
@@ -722,6 +821,7 @@ class PhoneDiscoveryAndClient(
             add(primaryBox)
             if (matchingLanById != null) add(matchingLanById)
             if (anyLan != null && anyLan !in this) add(anyLan)
+            if (rememberedLan != null) add(rememberedLan)
             if (bleCandidate != null && bleCandidate !in this) add(bleCandidate)
         }.distinctBy { "${it.channel}:${it.host}:${it.port}" }
 

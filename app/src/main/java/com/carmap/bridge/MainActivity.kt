@@ -596,6 +596,22 @@ class MainActivity : ComponentActivity() {
                                             CarBridgeConnectionManager.refreshBle(enable || BridgeRepository.state.value.bleEnabled)
                                             CarBridgeConnectionManager.probeNow()
                                         },
+                                        onToggleAutoConnectOnCarBt = { enable ->
+                                            BridgeRepository.setAutoConnectOnCarBt(enable)
+                                        },
+                                        onReconnectNow = {
+                                            scope.launch {
+                                                CarBridgeConnectionManager.probeNow()
+                                                val reconnected = CarBridgeConnectionManager.fastReconnectSavedEndpoints(this@MainActivity)
+                                                BridgeRepository.setStatusBanner(
+                                                    if (reconnected != null) {
+                                                        "Đã kết nối lại ${reconnected.name} (${reconnected.channel.label})"
+                                                    } else {
+                                                        "Đang dò lại Android Box qua LAN / BLE..."
+                                                    }
+                                                )
+                                            }
+                                        },
                                         onRequestBlePermissions = {
                                             blePermissionLauncher.launch(BlePermissionsHelper.requiredPermissions())
                                         },

@@ -92,6 +92,8 @@ fun SettingsScreen(
     onToggleAutoStartOnBoot: (Boolean) -> Unit,
     onToggleBle: (Boolean) -> Unit,
     onToggleProximity2m: (Boolean) -> Unit,
+    onToggleAutoConnectOnCarBt: (Boolean) -> Unit,
+    onReconnectNow: () -> Unit,
     onRequestBlePermissions: () -> Unit,
     onRequestOverlayPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
@@ -151,7 +153,9 @@ fun SettingsScreen(
                                     }
                                 },
                                 onToggleBle = onToggleBle,
-                                onToggleProximity2m = onToggleProximity2m
+                                onToggleProximity2m = onToggleProximity2m,
+                                onToggleAutoConnectOnCarBt = onToggleAutoConnectOnCarBt,
+                                onReconnectNow = onReconnectNow
                             )
                         } else {
                             BoxIdentitySettingsCard(state, adaptive, onToggleBle)
@@ -169,9 +173,11 @@ fun SettingsScreen(
                             PhonePermissionsCard(
                                 bleStatus = bleStatus,
                                 hasNotificationPerm = hasNotificationPerm,
+                                isBatteryIgnored = isBatteryIgnored,
                                 accents = accents,
                                 onRequestBlePermissions = onRequestBlePermissions,
-                                onRequestNotificationPermission = onRequestNotificationPermission
+                                onRequestNotificationPermission = onRequestNotificationPermission,
+                                onRequestBatteryOptimization = onRequestBatteryOptimization
                             )
                             AppearanceCard(state, adaptive)
                         } else {
@@ -227,16 +233,20 @@ fun SettingsScreen(
                                 }
                             },
                             onToggleBle = onToggleBle,
-                            onToggleProximity2m = onToggleProximity2m
+                            onToggleProximity2m = onToggleProximity2m,
+                            onToggleAutoConnectOnCarBt = onToggleAutoConnectOnCarBt,
+                            onReconnectNow = onReconnectNow
                         )
                     }
                     item {
                         PhonePermissionsCard(
                             bleStatus = bleStatus,
                             hasNotificationPerm = hasNotificationPerm,
+                            isBatteryIgnored = isBatteryIgnored,
                             accents = accents,
                             onRequestBlePermissions = onRequestBlePermissions,
-                            onRequestNotificationPermission = onRequestNotificationPermission
+                            onRequestNotificationPermission = onRequestNotificationPermission,
+                            onRequestBatteryOptimization = onRequestBatteryOptimization
                         )
                     }
                 } else {
@@ -390,7 +400,9 @@ private fun PhoneConnectionSettingsCard(
     onManualIpChange: (String) -> Unit,
     onPairManual: () -> Unit,
     onToggleBle: (Boolean) -> Unit,
-    onToggleProximity2m: (Boolean) -> Unit
+    onToggleProximity2m: (Boolean) -> Unit,
+    onToggleAutoConnectOnCarBt: (Boolean) -> Unit,
+    onReconnectNow: () -> Unit
 ) {
     val context = LocalContext.current
     SettingsGroupCard(title = "KẾT NỐI ANDROID BOX") {
@@ -522,6 +534,30 @@ private fun PhoneConnectionSettingsCard(
             adaptive = adaptive,
             onCheckedChange = onToggleProximity2m
         )
+        SettingsDivider()
+        SettingsToggleRow(
+            title = "Tự kết nối nền khi lên xe",
+            subtitle = state.lastAutoConnectNote?.let { "Tự kết nối gần nhất: $it · Tự xả Smart Queue" }
+                ?: "Tự bắt tay Box khi điện thoại nối Bluetooth xe / Wi-Fi và tự xả Smart Queue",
+            checked = state.autoConnectOnCarBt,
+            adaptive = adaptive,
+            onCheckedChange = onToggleAutoConnectOnCarBt
+        )
+        val rememberedChannels = listOfNotNull(
+            state.lastKnownLanHost?.let { "LAN: $it" },
+            state.lastKnownBleAddress?.let { "BLE: $it" }
+        ).joinToString(" · ").ifBlank { "Chưa lưu kênh LAN / BLE" }
+        SettingsDivider()
+        SettingsActionRow(
+            icon = Icons.Rounded.QrCode2,
+            tint = if (state.lastKnownLanHost != null || state.lastKnownBleAddress != null) accents.emerald else accents.amber,
+            bg = if (state.lastKnownLanHost != null || state.lastKnownBleAddress != null) accents.emeraldContainer else accents.amberContainer,
+            title = "Kênh đã nhớ (Kết nối kép LAN + BLE)",
+            subtitle = rememberedChannels,
+            trailingText = "Kết nối lại",
+            trailingHighlight = true,
+            onClick = onReconnectNow
+        )
     }
 }
 
@@ -529,9 +565,11 @@ private fun PhoneConnectionSettingsCard(
 private fun PhonePermissionsCard(
     bleStatus: BleStatus,
     hasNotificationPerm: Boolean,
+    isBatteryIgnored: Boolean,
     accents: CockpitAccents,
     onRequestBlePermissions: () -> Unit,
-    onRequestNotificationPermission: () -> Unit
+    onRequestNotificationPermission: () -> Unit,
+    onRequestBatteryOptimization: () -> Unit
 ) {
     SettingsGroupCard(title = "QUYỀN KẾT NỐI & THÔNG BÁO") {
         SettingsActionRow(
@@ -548,6 +586,17 @@ private fun PhonePermissionsCard(
             },
             trailingHighlight = bleStatus.permissionsGranted && bleStatus.hardwareSupported,
             onClick = onRequestBlePermissions
+        )
+        SettingsDivider()
+        SettingsActionRow(
+            icon = Icons.Rounded.BatteryChargingFull,
+            tint = if (isBatteryIgnored) accents.emerald else accents.amber,
+            bg = if (isBatteryIgnored) accents.emeraldContainer else accents.amberContainer,
+            title = "Chạy nền bền bỉ (Không tối ưu pin)",
+            subtitle = "Giúp điện thoại tự bắt tay Box ngay khi Bluetooth xe kết nối",
+            trailingText = if (isBatteryIgnored) "Đã bật" else "Cấp quyền",
+            trailingHighlight = isBatteryIgnored,
+            onClick = onRequestBatteryOptimization
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             SettingsDivider()
@@ -635,8 +684,8 @@ private fun AutoLaunchSettingsCard(
     SettingsGroupCard(title = "TỰ KHỞI ĐỘNG & MỞ BẢN ĐỒ") {
         SettingsToggleRow(
             title = "Tự khởi động ngầm khi Box bật nguồn",
-            subtitle = state.lastBootStartNote?.let { "Tự bật gần nhất: $it · Có Watchdog giữ nền" }
-                ?: "Tự chạy ngầm khi nổ máy / bật Box + Watchdog tự phục hồi",
+            subtitle = state.lastBootStartNote?.let { "Tự bật gần nhất: $it · DirectBoot + ACC + NetWake + chống xóa Recents" }
+                ?: "DirectBoot + ACC + Network Watchdog + tự phục hồi khi xóa Recents",
             checked = state.autoStartOnBoot,
             adaptive = adaptive,
             onCheckedChange = onToggleAutoStartOnBoot

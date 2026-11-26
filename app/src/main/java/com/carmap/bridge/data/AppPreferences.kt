@@ -47,6 +47,11 @@ object AppPreferences {
     private const val KEY_BLE_ENABLED = "ble_enabled"
     private const val KEY_PREFER_BLE = "prefer_ble"
     private const val KEY_PROXIMITY_ONLY_2M = "proximity_only_2m"
+    private const val KEY_AUTO_CONNECT_PHONE = "auto_connect_on_car_bt"
+    private const val KEY_LAST_LAN_HOST = "last_known_lan_host"
+    private const val KEY_LAST_LAN_PORT = "last_known_lan_port"
+    private const val KEY_LAST_BLE_ADDR = "last_known_ble_addr"
+    private const val KEY_LAST_AUTO_CONNECT_NOTE = "last_auto_connect_note"
     private const val KEY_AUTO_OPEN = "auto_open"
     private const val KEY_SIMULATE_PREVIEW = "simulate_preview_v2"
     private const val KEY_BOX_TARGET = "box_preferred_target"
@@ -87,6 +92,23 @@ object AppPreferences {
                 p.getString(KEY_ROLE, DeviceRole.PHONE_SENDER.name) == DeviceRole.CAR_BOX_RECEIVER.name &&
                 p.getBoolean(KEY_AUTO_START_ON_BOOT, true)
         }.getOrDefault(false)
+    }
+
+    fun shouldAutoConnectOnPhone(context: Context): Boolean {
+        return runCatching {
+            val p = prefs(context)
+            p.getBoolean(KEY_ROLE_CONFIGURED, false) &&
+                p.getString(KEY_ROLE, DeviceRole.PHONE_SENDER.name) == DeviceRole.PHONE_SENDER.name &&
+                p.getBoolean(KEY_AUTO_CONNECT_PHONE, true)
+        }.getOrDefault(false)
+    }
+
+    fun recordAutoConnectEvent(context: Context, triggerLabel: String) {
+        val fmt = java.text.SimpleDateFormat("HH:mm dd/MM", java.util.Locale.getDefault())
+        val note = "${fmt.format(java.util.Date())} ($triggerLabel)"
+        runCatching {
+            prefs(context).edit().putString(KEY_LAST_AUTO_CONNECT_NOTE, note).apply()
+        }
     }
 
     fun recordBootAutoStart(context: Context, trigger: String) {
@@ -147,6 +169,12 @@ object AppPreferences {
 
         val lastBootNote = runCatching { bootPrefs(context).getString(KEY_LAST_BOOT_START_NOTE, null) }.getOrNull()
             ?: p.getString(KEY_LAST_BOOT_START_NOTE, null)
+        val lastAutoConnectNote = p.getString(KEY_LAST_AUTO_CONNECT_NOTE, null)
+        val lastLanHost = p.getString(KEY_LAST_LAN_HOST, null)
+            ?: pairedBox?.takeIf { it.channel == TransportChannel.LAN && !it.isLocalDemo }?.host
+        val lastLanPort = p.getInt(KEY_LAST_LAN_PORT, BoxNetworkConstants.TCP_PORT)
+        val lastBleAddr = p.getString(KEY_LAST_BLE_ADDR, null)
+            ?: pairedBox?.bleAddress
 
         return BridgeUiState(
             themeMode = theme,
@@ -154,6 +182,11 @@ object AppPreferences {
             roleConfigured = p.getBoolean(KEY_ROLE_CONFIGURED, false),
             autoStartOnBoot = p.getBoolean(KEY_AUTO_START_ON_BOOT, true),
             lastBootStartNote = lastBootNote,
+            autoConnectOnCarBt = p.getBoolean(KEY_AUTO_CONNECT_PHONE, true),
+            lastAutoConnectNote = lastAutoConnectNote,
+            lastKnownLanHost = lastLanHost,
+            lastKnownLanPort = lastLanPort,
+            lastKnownBleAddress = lastBleAddr,
             boxName = p.getString(KEY_BOX_NAME, "Android Box Mazda CX-5") ?: "Android Box Mazda CX-5",
             pairingPin = p.getString(KEY_PAIRING_PIN, "2689") ?: "2689",
             bleEnabled = p.getBoolean(KEY_BLE_ENABLED, true),
@@ -201,6 +234,14 @@ object AppPreferences {
             putBoolean(KEY_BLE_ENABLED, state.bleEnabled)
             putBoolean(KEY_PREFER_BLE, state.preferBleOverLan)
             putBoolean(KEY_PROXIMITY_ONLY_2M, state.proximityOnly2m)
+            putBoolean(KEY_AUTO_CONNECT_PHONE, state.autoConnectOnCarBt)
+            if (!state.lastKnownLanHost.isNullOrBlank()) {
+                putString(KEY_LAST_LAN_HOST, state.lastKnownLanHost)
+                putInt(KEY_LAST_LAN_PORT, state.lastKnownLanPort)
+            }
+            if (!state.lastKnownBleAddress.isNullOrBlank()) {
+                putString(KEY_LAST_BLE_ADDR, state.lastKnownBleAddress)
+            }
             putBoolean(KEY_AUTO_OPEN, state.autoOpenOnBox)
             putBoolean(KEY_SIMULATE_PREVIEW, state.simulatePreviewOnEmulator)
             putString(KEY_BOX_TARGET, state.boxPreferredTarget.name)
