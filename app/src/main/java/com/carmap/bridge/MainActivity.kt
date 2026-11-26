@@ -273,11 +273,6 @@ class MainActivity : ComponentActivity() {
                                                     CarBridgeConnectionManager.sendClipboardToBox(this@MainActivity, text)
                                                 }
                                             },
-                                            onSendRemoteCommand = { cmd ->
-                                                scope.launch {
-                                                    CarBridgeConnectionManager.sendRemoteCommand(this@MainActivity, cmd)
-                                                }
-                                            },
                                             onPingBox = {
                                                 scope.launch {
                                                     CarBridgeConnectionManager.pingActiveBox(this@MainActivity)
@@ -387,6 +382,19 @@ class MainActivity : ComponentActivity() {
                                         onRequestNotificationPermission = {
                                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                                 notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                            }
+                                        },
+                                        onRequestBatteryOptimization = {
+                                            runCatching {
+                                                val intent = Intent(
+                                                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                                    Uri.parse("package:$packageName")
+                                                )
+                                                startActivity(intent)
+                                            }.onFailure {
+                                                runCatching {
+                                                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                                                }
                                             }
                                         }
                                     )

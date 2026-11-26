@@ -1,5 +1,8 @@
 package com.carmap.bridge.ui.screens
 
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -24,9 +27,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
-import androidx.compose.material.icons.automirrored.rounded.VolumeDown
-import androidx.compose.material.icons.automirrored.rounded.VolumeOff
-import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Close
@@ -34,15 +34,12 @@ import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DirectionsCar
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Route
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Share
-import androidx.compose.material.icons.rounded.SkipNext
-import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.WifiTethering
 import androidx.compose.material3.AlertDialog
@@ -66,7 +63,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,7 +72,6 @@ import com.carmap.bridge.data.BridgeUiState
 import com.carmap.bridge.model.LinkKind
 import com.carmap.bridge.model.MapProvider
 import com.carmap.bridge.model.ParsedMapLink
-import com.carmap.bridge.model.RemoteCommand
 import com.carmap.bridge.model.TransportChannel
 import com.carmap.bridge.parser.MapLinkResolver
 import com.carmap.bridge.parser.MediaLinkHelper
@@ -97,7 +92,6 @@ fun PhoneSenderScreen(
     onAcceptClipboardPairing: (String) -> Unit,
     onSendLink: (String, MapProvider) -> Unit,
     onSendClipboardText: (String) -> Unit,
-    onSendRemoteCommand: (RemoteCommand) -> Unit,
     onPingBox: () -> Unit,
     onClearPendingQueue: () -> Unit,
     onOpenSystemShareSheet: (String) -> Unit,
@@ -173,18 +167,16 @@ fun PhoneSenderScreen(
                         SmartQueueBanner(state.pendingQueueTitle, accents, adaptive, onClearPendingQueue)
                     }
                     StatusBannerCard(state.lastStatusBanner, accents, adaptive)
-                    CarQuickUtilitiesCard(
+                    ClipboardBridgeCard(
+                        state = state,
                         clipDraft = clipDraft,
                         accents = accents,
                         adaptive = adaptive,
                         onClipDraftChange = { clipDraft = it },
-                        onSendClipboard = {
-                            if (clipDraft.isNotBlank()) {
-                                onSendClipboardText(clipDraft)
-                                clipDraft = ""
-                            }
-                        },
-                        onSendRemote = onSendRemoteCommand
+                        onSendClipboard = { text ->
+                            onSendClipboardText(text)
+                            if (text == clipDraft) clipDraft = ""
+                        }
                     )
                 }
                 Column(
@@ -279,18 +271,16 @@ fun PhoneSenderScreen(
                     )
                 }
                 item {
-                    CarQuickUtilitiesCard(
+                    ClipboardBridgeCard(
+                        state = state,
                         clipDraft = clipDraft,
                         accents = accents,
                         adaptive = adaptive,
                         onClipDraftChange = { clipDraft = it },
-                        onSendClipboard = {
-                            if (clipDraft.isNotBlank()) {
-                                onSendClipboardText(clipDraft)
-                                clipDraft = ""
-                            }
-                        },
-                        onSendRemote = onSendRemoteCommand
+                        onSendClipboard = { text ->
+                            onSendClipboardText(text)
+                            if (text == clipDraft) clipDraft = ""
+                        }
                     )
                 }
                 if (state.history.isNotEmpty()) {
@@ -324,7 +314,7 @@ private fun SenderHeader(
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = "Điện thoại · Bản đồ, Media & Điều khiển xe",
+                text = "Điện thoại · Dẫn đường, Media & Clipboard Box",
                 fontSize = adaptive.sp(11.5f),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -887,14 +877,15 @@ private fun DestinationComposeCard(
 }
 
 @Composable
-private fun CarQuickUtilitiesCard(
+private fun ClipboardBridgeCard(
+    state: BridgeUiState,
     clipDraft: String,
     accents: CockpitAccents,
     adaptive: AdaptiveMetrics,
     onClipDraftChange: (String) -> Unit,
-    onSendClipboard: () -> Unit,
-    onSendRemote: (RemoteCommand) -> Unit
+    onSendClipboard: (String) -> Unit
 ) {
+    val context = LocalContext.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
@@ -904,79 +895,117 @@ private fun CarQuickUtilitiesCard(
             modifier = Modifier.padding(adaptive.cardPadding),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = "ĐIỀU KHIỂN NHẠC & CLIPBOARD BOX",
-                fontSize = adaptive.sp(10.5f),
-                fontWeight = FontWeight.Bold,
-                letterSpacing = adaptive.sp(0.7f),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "CLIPBOARD SANG BOX",
+                    fontSize = adaptive.sp(10.5f),
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = adaptive.sp(0.7f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (state.clipboardHistory.isNotEmpty()) {
+                    Text(
+                        text = "Xóa lịch sử",
+                        fontSize = adaptive.sp(11f),
+                        fontWeight = FontWeight.SemiBold,
+                        color = accents.coral,
+                        modifier = Modifier.clickable { BridgeRepository.clearClipboardHistory() }
+                    )
+                }
+            }
+
+            OutlinedTextField(
+                value = clipDraft,
+                onValueChange = onClipDraftChange,
+                placeholder = {
+                    Text(
+                        text = "Nhập văn bản, tài khoản, mật khẩu Wi-Fi...",
+                        fontSize = adaptive.sp(12f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
+                minLines = 1,
+                maxLines = 3,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
             )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                RemoteBtn(Icons.Rounded.SkipPrevious, "Trước", accents.cyan, Modifier.weight(1f)) { onSendRemote(RemoteCommand.PREVIOUS) }
-                RemoteBtn(Icons.Rounded.PlayArrow, "Phát", accents.emerald, Modifier.weight(1.1f)) { onSendRemote(RemoteCommand.PLAY_PAUSE) }
-                RemoteBtn(Icons.Rounded.SkipNext, "Tiếp", accents.cyan, Modifier.weight(1f)) { onSendRemote(RemoteCommand.NEXT) }
-                RemoteBtn(Icons.AutoMirrored.Rounded.VolumeDown, "Vol-", MaterialTheme.colorScheme.onSurface, Modifier.weight(1f)) { onSendRemote(RemoteCommand.VOL_DOWN) }
-                RemoteBtn(Icons.AutoMirrored.Rounded.VolumeUp, "Vol+", MaterialTheme.colorScheme.onSurface, Modifier.weight(1f)) { onSendRemote(RemoteCommand.VOL_UP) }
-                RemoteBtn(Icons.AutoMirrored.Rounded.VolumeOff, "Mute", accents.coral, Modifier.weight(0.9f)) { onSendRemote(RemoteCommand.MUTE) }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = clipDraft,
-                    onValueChange = onClipDraftChange,
-                    placeholder = {
-                        Text(
-                            text = "Gửi chữ / pass Wi-Fi vào Clipboard Box...",
-                            fontSize = adaptive.sp(12f),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                OutlinedButton(
+                    onClick = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
+                        if (clip.isNotBlank()) {
+                            onSendClipboard(clip)
+                        } else {
+                            Toast.makeText(context, "Clipboard điện thoại đang trống", Toast.LENGTH_SHORT).show()
+                        }
                     },
-                    singleLine = true,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(adaptive.dp(40f)),
                     shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f)
-                )
+                    contentPadding = PaddingValues(horizontal = 8.dp)
+                ) {
+                    Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Dán & Gửi ngay", fontSize = adaptive.sp(12f), fontWeight = FontWeight.SemiBold, maxLines = 1)
+                }
+
                 Button(
-                    onClick = onSendClipboard,
+                    onClick = { onSendClipboard(clipDraft) },
                     enabled = clipDraft.isNotBlank(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(adaptive.dp(40f)),
                     shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = accents.cyan,
                         contentColor = Color(0xFF041A24)
                     )
                 ) {
-                    Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "Gửi Clipboard", modifier = Modifier.size(16.dp))
+                    Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Gửi vào Box", fontSize = adaptive.sp(12f), fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+            }
+
+            if (state.clipboardHistory.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    state.clipboardHistory.take(5).forEach { snippet ->
+                        CockpitPill(
+                            onClick = { onSendClipboard(snippet) },
+                            shape = RoundedCornerShape(999.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Text(
+                                text = snippet.lines().firstOrNull().orEmpty().take(24),
+                                fontSize = adaptive.sp(11f),
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                            )
+                        }
+                    }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun RemoteBtn(
-    icon: ImageVector,
-    desc: String,
-    tint: Color,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    CockpitPill(
-        onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        modifier = modifier.height(38.dp)
-    ) {
-        Icon(icon, contentDescription = desc, tint = tint, modifier = Modifier.size(18.dp))
     }
 }
 

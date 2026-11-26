@@ -1,8 +1,10 @@
 package com.carmap.bridge.ui.screens
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -25,6 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Map
@@ -87,7 +90,8 @@ fun SettingsScreen(
     onToggleBle: (Boolean) -> Unit,
     onRequestBlePermissions: () -> Unit,
     onRequestOverlayPermission: () -> Unit,
-    onRequestNotificationPermission: () -> Unit
+    onRequestNotificationPermission: () -> Unit,
+    onRequestBatteryOptimization: () -> Unit
 ) {
     val context = LocalContext.current
     val accents = LocalCockpitAccents.current
@@ -95,6 +99,11 @@ fun SettingsScreen(
     var manualIp by remember { mutableStateOf("") }
     val installedVersion = remember { AppUpdater.getInstalledVersion(context) }
     val isPhone = state.role == DeviceRole.PHONE_SENDER
+
+    val isBatteryIgnored = remember(state.boxServiceRunning) {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        pm?.isIgnoringBatteryOptimizations(context.packageName) == true
+    }
 
     val hasNotificationPerm = remember(state.boxServiceRunning) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -110,70 +119,83 @@ fun SettingsScreen(
         contentAlignment = Alignment.TopCenter
     ) {
         if (adaptive.isTwoColumn) {
-            Row(
+            Column(
                 modifier = Modifier
-                    .widthIn(max = 1120.dp)
+                    .widthIn(max = 1140.dp)
                     .fillMaxSize()
                     .padding(horizontal = adaptive.screenPadding)
-                    .padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
+                    .padding(top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
             ) {
-                Column(
+                SettingsHeader(installedVersion.versionName, state.role, adaptive, accents)
+                Row(
                     modifier = Modifier
                         .weight(1f)
-                        .verticalScroll(rememberScrollState())
-                        .padding(bottom = adaptive.navBottomPadding),
-                    verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
                 ) {
-                    SettingsHeader(installedVersion.versionName, state.role, adaptive, accents)
-                    AppearanceAndRoleCard(state, accents, adaptive, onSwitchRole)
-                    OtaUpdateCard(
-                        versionName = installedVersion.versionName,
-                        availableUpdate = availableUpdate,
-                        accents = accents,
-                        onCheckUpdate = onCheckUpdate
-                    )
-                }
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
-                        .padding(bottom = adaptive.navBottomPadding),
-                    verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
-                ) {
-                    if (isPhone) {
-                        PhoneConnectionSettingsCard(
-                            state = state,
-                            manualIp = manualIp,
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                            .padding(bottom = adaptive.navBottomPadding),
+                        verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
+                    ) {
+                        OtaUpdateCard(
+                            versionName = installedVersion.versionName,
+                            availableUpdate = availableUpdate,
                             accents = accents,
-                            adaptive = adaptive,
-                            onManualIpChange = { manualIp = it },
-                            onPairManual = {
-                                if (manualIp.isNotBlank()) {
-                                    BridgeRepository.addManualBox(context, manualIp, "Android Box ($manualIp)")
-                                    manualIp = ""
-                                }
-                            },
-                            onToggleBle = onToggleBle
+                            onCheckUpdate = onCheckUpdate
                         )
-                        PhonePermissionsCard(
-                            bleStatus = bleStatus,
-                            accents = accents,
-                            onRequestBlePermissions = onRequestBlePermissions
-                        )
-                    } else {
-                        BoxIdentitySettingsCard(state, adaptive, onToggleBle)
-                        AutoLaunchSettingsCard(state, accents, adaptive, onToggleBoxService)
-                        BoxPermissionsAndAppsCard(
-                            canDrawOverlays = canDrawOverlays,
-                            hasNotificationPerm = hasNotificationPerm,
-                            installedMaps = installedMaps,
-                            bleStatus = bleStatus,
-                            accents = accents,
-                            onRequestOverlayPermission = onRequestOverlayPermission,
-                            onRequestNotificationPermission = onRequestNotificationPermission,
-                            onRequestBlePermissions = onRequestBlePermissions
-                        )
+                        if (isPhone) {
+                            PhoneConnectionSettingsCard(
+                                state = state,
+                                manualIp = manualIp,
+                                accents = accents,
+                                adaptive = adaptive,
+                                onManualIpChange = { manualIp = it },
+                                onPairManual = {
+                                    if (manualIp.isNotBlank()) {
+                                        BridgeRepository.addManualBox(context, manualIp, "Android Box ($manualIp)")
+                                        manualIp = ""
+                                    }
+                                },
+                                onToggleBle = onToggleBle
+                            )
+                        } else {
+                            BoxIdentitySettingsCard(state, adaptive, onToggleBle)
+                            AppearanceAndRoleCard(state, accents, adaptive, onSwitchRole)
+                        }
+                    }
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                            .padding(bottom = adaptive.navBottomPadding),
+                        verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
+                    ) {
+                        if (isPhone) {
+                            PhonePermissionsCard(
+                                bleStatus = bleStatus,
+                                accents = accents,
+                                onRequestBlePermissions = onRequestBlePermissions
+                            )
+                            AppearanceAndRoleCard(state, accents, adaptive, onSwitchRole)
+                        } else {
+                            AutoLaunchSettingsCard(state, accents, adaptive, onToggleBoxService)
+                            BoxPermissionsAndAppsCard(
+                                canDrawOverlays = canDrawOverlays,
+                                hasNotificationPerm = hasNotificationPerm,
+                                isBatteryIgnored = isBatteryIgnored,
+                                installedMaps = installedMaps,
+                                bleStatus = bleStatus,
+                                accents = accents,
+                                onRequestOverlayPermission = onRequestOverlayPermission,
+                                onRequestNotificationPermission = onRequestNotificationPermission,
+                                onRequestBatteryOptimization = onRequestBatteryOptimization,
+                                onRequestBlePermissions = onRequestBlePermissions
+                            )
+                        }
                     }
                 }
             }
@@ -228,11 +250,13 @@ fun SettingsScreen(
                         BoxPermissionsAndAppsCard(
                             canDrawOverlays = canDrawOverlays,
                             hasNotificationPerm = hasNotificationPerm,
+                            isBatteryIgnored = isBatteryIgnored,
                             installedMaps = installedMaps,
                             bleStatus = bleStatus,
                             accents = accents,
                             onRequestOverlayPermission = onRequestOverlayPermission,
                             onRequestNotificationPermission = onRequestNotificationPermission,
+                            onRequestBatteryOptimization = onRequestBatteryOptimization,
                             onRequestBlePermissions = onRequestBlePermissions
                         )
                     }
@@ -673,11 +697,13 @@ private fun AutoLaunchSettingsCard(
 private fun BoxPermissionsAndAppsCard(
     canDrawOverlays: Boolean,
     hasNotificationPerm: Boolean,
+    isBatteryIgnored: Boolean,
     installedMaps: Map<MapProvider, Boolean>,
     bleStatus: BleStatus,
     accents: CockpitAccents,
     onRequestOverlayPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
+    onRequestBatteryOptimization: () -> Unit,
     onRequestBlePermissions: () -> Unit
 ) {
     SettingsGroupCard(title = "QUYỀN HỆ THỐNG & ỨNG DỤNG") {
@@ -690,6 +716,17 @@ private fun BoxPermissionsAndAppsCard(
             trailingText = if (canDrawOverlays) "Đã cấp" else "Cấp quyền",
             trailingHighlight = canDrawOverlays,
             onClick = onRequestOverlayPermission
+        )
+        SettingsDivider()
+        SettingsActionRow(
+            icon = Icons.Rounded.BatteryChargingFull,
+            tint = if (isBatteryIgnored) accents.emerald else accents.amber,
+            bg = if (isBatteryIgnored) accents.emeraldContainer else accents.amberContainer,
+            title = "Tự khởi động & chạy ngầm bền bỉ",
+            subtitle = "Không tối ưu pin để Box tự bật ngầm khi nổ máy",
+            trailingText = if (isBatteryIgnored) "Đã bật" else "Cấp quyền",
+            trailingHighlight = isBatteryIgnored,
+            onClick = onRequestBatteryOptimization
         )
         SettingsDivider()
         SettingsActionRow(

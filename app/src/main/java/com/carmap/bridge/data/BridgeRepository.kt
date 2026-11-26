@@ -46,13 +46,15 @@ data class BridgeUiState(
     val bleScanning: Boolean = false,
     val preferBleOverLan: Boolean = false,
     val autoOpenOnBox: Boolean = true,
-    val simulatePreviewOnEmulator: Boolean = true,
+    val simulatePreviewOnEmulator: Boolean = false,
     val boxPreferredTarget: MapProvider = MapProvider.AUTO,
     val phoneTargetOverride: MapProvider = MapProvider.AUTO,
     val discoveredBoxes: List<DiscoveredBox> = emptyList(),
     val pairedBox: DiscoveredBox? = null,
     val history: List<SharedTransferRecord> = emptyList(),
     val savedPlaces: List<SavedPlace> = emptyList(),
+    val clipboardHistory: List<String> = emptyList(),
+    val lastReceivedClipboard: String? = null,
     val pendingQueueTitle: String? = null,
     val lastPingSummary: String? = null,
     val lastStatusBanner: String? = null
@@ -298,6 +300,24 @@ object BridgeRepository {
 
     fun clearHistory() {
         _state.update { it.copy(history = emptyList()) }
+        persist()
+    }
+
+    fun recordClipboardItem(text: String, isReceivedOnBox: Boolean = false) {
+        val clean = text.trim()
+        if (clean.isBlank()) return
+        _state.update { cur ->
+            val updated = (listOf(clean) + cur.clipboardHistory.filterNot { it == clean }).take(8)
+            cur.copy(
+                clipboardHistory = updated,
+                lastReceivedClipboard = if (isReceivedOnBox) clean else cur.lastReceivedClipboard
+            )
+        }
+        persist()
+    }
+
+    fun clearClipboardHistory() {
+        _state.update { it.copy(clipboardHistory = emptyList(), lastReceivedClipboard = null) }
         persist()
     }
 

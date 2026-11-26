@@ -24,13 +24,26 @@ object MapIntentLauncher {
         parsed: ParsedMapLink,
         preferredTarget: MapProvider
     ): LaunchSpec {
-        val effective = when {
+        val desired = when {
             preferredTarget != MapProvider.AUTO -> preferredTarget
             parsed.sourceProvider != MapProvider.UNKNOWN -> parsed.sourceProvider
             else -> MapProvider.GOOGLE_MAPS
         }
 
-        val installedPkg = findInstalledPackage(context, effective.packageNames)
+        // If desired map app isn't installed on Box, automatically fall back to any installed map app
+        val installedDesiredPkg = findInstalledPackage(context, desired.packageNames)
+        val (effective, installedPkg) = if (installedDesiredPkg != null) {
+            desired to installedDesiredPkg
+        } else {
+            val fallbackProvider = listOf(MapProvider.GOOGLE_MAPS, MapProvider.WAZE, MapProvider.VIETMAP)
+                .firstOrNull { findInstalledPackage(context, it.packageNames) != null }
+            if (fallbackProvider != null) {
+                fallbackProvider to findInstalledPackage(context, fallbackProvider.packageNames)
+            } else {
+                desired to null
+            }
+        }
+
         val uriString = buildUriForProvider(parsed, effective)
 
         return LaunchSpec(
@@ -80,31 +93,33 @@ object MapIntentLauncher {
             }
 
             else -> {
-                // Google Maps supports multi-stop routes natively via dir/?api=1
-                if (parsed.kind == LinkKind.ROUTE) {
+                // Google Maps: always start turn-by-turn driving navigation immediately!
+                if (parsed.kind == LinkKind.ROUTE && parsed.waypoints.isNotEmpty()) {
                     val destArg = parsed.destination?.let {
                         if (it.hasCoords()) "${it.lat},${it.lng}" else it.label
                     } ?: destLabel
-                    val sb = StringBuilder("https://www.google.com/maps/dir/?api=1&destination=${enc(destArg)}&travelmode=driving")
+                    val sb = StringBuilder(
+                        "https://www.google.com/maps/dir/?api=1&destination=${enc(destArg)}&travelmode=driving&dir_action=navigate"
+                    )
                     parsed.origin?.let { o ->
                         if (o.label != "Vị trí hiện tại") {
                             val oArg = if (o.hasCoords()) "${o.lat},${o.lng}" else o.label
                             sb.append("&origin=").append(enc(oArg))
                         }
                     }
-                    if (parsed.waypoints.isNotEmpty()) {
-                        val wpArg = parsed.waypoints.joinToString("|") { wp ->
-                            if (wp.hasCoords()) "${wp.lat},${wp.lng}" else wp.label
-                        }
-                        sb.append("&waypoints=").append(enc(wpArg))
+                    val wpArg = parsed.waypoints.joinToString("|") { wp ->
+                        if (wp.hasCoords()) "${wp.lat},${wp.lng}" else wp.label
                     }
+                    sb.append("&waypoints=").append(enc(wpArg))
                     sb.toString()
                 } else if (lat != null && lng != null) {
-                    "google.navigation:q=$lat,$lng"
+                    "google.navigation:q=$lat,$lng&mode=d"
+                } else if (destLabel.isNotBlank() && destLabel != "Điểm đến") {
+                    "google.navigation:q=${enc(destLabel)}&mode=d"
                 } else if (parsed.resolvedUrl.startsWith("http")) {
                     parsed.resolvedUrl
                 } else {
-                    "geo:0,0?q=${enc(destLabel)}"
+                    "google.navigation:q=${enc(parsed.rawInput.trim())}&mode=d"
                 }
             }
         }

@@ -185,8 +185,10 @@ object CarBridgeConnectionManager {
             action = BridgeAction.CLIPBOARD,
             onWorkingBoxResolved = { BridgeRepository.selectPairedBox(context, it) }
         ) ?: Result.failure(IllegalStateException("Chưa khởi tạo kết nối"))
-        res.onSuccess { BridgeRepository.setStatusBanner(it) }
-            .onFailure { BridgeRepository.setStatusBanner(it.message ?: "Gửi Clipboard thất bại") }
+        res.onSuccess {
+            BridgeRepository.recordClipboardItem(clean, isReceivedOnBox = false)
+            BridgeRepository.setStatusBanner(it)
+        }.onFailure { BridgeRepository.setStatusBanner(it.message ?: "Gửi Clipboard thất bại") }
         return res
     }
 

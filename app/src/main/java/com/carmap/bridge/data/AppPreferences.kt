@@ -35,7 +35,7 @@ object AppPreferences {
     private const val KEY_BLE_ENABLED = "ble_enabled"
     private const val KEY_PREFER_BLE = "prefer_ble"
     private const val KEY_AUTO_OPEN = "auto_open"
-    private const val KEY_SIMULATE_PREVIEW = "simulate_preview"
+    private const val KEY_SIMULATE_PREVIEW = "simulate_preview_v2"
     private const val KEY_BOX_TARGET = "box_preferred_target"
     private const val KEY_PHONE_TARGET = "phone_target_override"
 
@@ -48,6 +48,7 @@ object AppPreferences {
 
     private const val KEY_HISTORY_JSON = "transfer_history_json"
     private const val KEY_SAVED_PLACES_JSON = "saved_places_json"
+    private const val KEY_CLIPBOARD_HISTORY_JSON = "clipboard_history_json"
     private const val KEY_PENDING_OUTBOX_JSON = "pending_outbox_json"
 
     private fun prefs(context: Context): SharedPreferences =
@@ -100,6 +101,7 @@ object AppPreferences {
 
         val history = parseHistoryJson(p.getString(KEY_HISTORY_JSON, null))
         val savedPlaces = parseSavedPlacesJson(p.getString(KEY_SAVED_PLACES_JSON, null))
+        val clipboardHistory = parseClipboardHistoryJson(p.getString(KEY_CLIPBOARD_HISTORY_JSON, null))
         val pendingOutbox = loadPendingOutbox(context)
 
         return BridgeUiState(
@@ -111,12 +113,13 @@ object AppPreferences {
             bleEnabled = p.getBoolean(KEY_BLE_ENABLED, true),
             preferBleOverLan = p.getBoolean(KEY_PREFER_BLE, false),
             autoOpenOnBox = p.getBoolean(KEY_AUTO_OPEN, true),
-            simulatePreviewOnEmulator = p.getBoolean(KEY_SIMULATE_PREVIEW, true),
+            simulatePreviewOnEmulator = p.getBoolean(KEY_SIMULATE_PREVIEW, false),
             boxPreferredTarget = boxTarget,
             phoneTargetOverride = phoneTarget,
             pairedBox = pairedBox,
             history = history,
             savedPlaces = savedPlaces,
+            clipboardHistory = clipboardHistory,
             pendingQueueTitle = pendingOutbox?.title
         )
     }
@@ -147,6 +150,7 @@ object AppPreferences {
 
             putString(KEY_HISTORY_JSON, serializeHistory(state.history))
             putString(KEY_SAVED_PLACES_JSON, serializeSavedPlaces(state.savedPlaces))
+            putString(KEY_CLIPBOARD_HISTORY_JSON, serializeClipboardHistory(state.clipboardHistory))
             apply()
         }
     }
@@ -271,6 +275,25 @@ object AppPreferences {
                     if (label.isNotBlank() && link.isNotBlank()) {
                         add(SavedPlace(id = o.optString("id", "p-$i"), label = label, rawLink = link))
                     }
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun serializeClipboardHistory(items: List<String>): String {
+        val arr = JSONArray()
+        items.take(8).forEach { arr.put(it) }
+        return arr.toString()
+    }
+
+    private fun parseClipboardHistoryJson(raw: String?): List<String> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val s = arr.optString(i, "").trim()
+                    if (s.isNotBlank()) add(s)
                 }
             }
         }.getOrDefault(emptyList())

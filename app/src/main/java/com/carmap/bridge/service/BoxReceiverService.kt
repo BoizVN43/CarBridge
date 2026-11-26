@@ -166,6 +166,7 @@ class BoxReceiverService : Service() {
                     kind = LinkKind.CLIPBOARD,
                     title = "Clipboard: ${text.take(48)}"
                 )
+                BridgeRepository.recordClipboardItem(text, isReceivedOnBox = true)
                 BridgeRepository.recordTransfer(
                     direction = "NHẬN CLIPBOARD",
                     peerName = "${packet.senderName} ($remoteEndpoint)",
