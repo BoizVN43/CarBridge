@@ -66,10 +66,10 @@ data class AdaptiveMetrics(
     val isTwoColumn: Boolean = false,
     val isLandscape: Boolean = false,
     val scale: Float = 1f,
-    val screenPadding: Dp = 16.dp,
-    val sectionGap: Dp = 12.dp,
-    val cardPadding: Dp = 14.dp,
-    val navBottomPadding: Dp = 104.dp
+    val screenPadding: Dp = 12.dp,
+    val sectionGap: Dp = 8.dp,
+    val cardPadding: Dp = 12.dp,
+    val navBottomPadding: Dp = 78.dp
 ) {
     fun sp(base: Float): TextUnit = (base * scale).sp
     fun dp(base: Float): Dp = (base * scale).dp
@@ -79,8 +79,8 @@ data class AdaptiveMetrics(
             val isLandscape = width > height
             val isTwoColumn = width >= 600.dp || (isLandscape && width >= 540.dp)
             val scale = when {
-                width >= 900.dp -> 1.12f
-                width >= 600.dp -> 1.06f
+                width >= 900.dp -> 1.10f
+                width >= 600.dp -> 1.04f
                 width < 360.dp || height < 620.dp -> 0.90f
                 else -> 1.0f
             }
@@ -90,10 +90,10 @@ data class AdaptiveMetrics(
                 isTwoColumn = isTwoColumn,
                 isLandscape = isLandscape,
                 scale = scale,
-                screenPadding = if (isTwoColumn) 20.dp else (16f * scale).dp,
-                sectionGap = if (isTwoColumn) 14.dp else (12f * scale).dp,
-                cardPadding = if (isTwoColumn) 16.dp else (14f * scale).dp,
-                navBottomPadding = if (isLandscape) 88.dp else 104.dp
+                screenPadding = if (isTwoColumn) 16.dp else (12f * scale).dp,
+                sectionGap = if (isTwoColumn) 10.dp else (8f * scale).dp,
+                cardPadding = if (isTwoColumn) 13.dp else (12f * scale).dp,
+                navBottomPadding = if (isLandscape) 68.dp else 78.dp
             )
         }
     }

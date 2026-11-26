@@ -33,6 +33,7 @@ data class SampleMapLink(
 data class BridgeUiState(
     val themeMode: ThemeMode = ThemeMode.DARK,
     val role: DeviceRole = DeviceRole.PHONE_SENDER,
+    val roleConfigured: Boolean = false,
     val boxName: String = "Android Box Mazda CX-5",
     val pairingPin: String = "2689",
     val boxServiceRunning: Boolean = false,
@@ -110,7 +111,7 @@ object BridgeRepository {
     }
 
     fun setRole(role: DeviceRole) {
-        _state.update { it.copy(role = role) }
+        _state.update { it.copy(role = role, roleConfigured = true) }
         persist()
     }
 
@@ -276,7 +277,7 @@ object BridgeRepository {
                 val shortcut = ShortcutInfoCompat.Builder(app, "box_${box.id}")
                     .setShortLabel(box.name)
                     .setLongLabel("Gửi thẳng lên ${box.name}")
-                    .setIcon(IconCompat.createWithResource(app, R.drawable.ic_car_map))
+                    .setIcon(IconCompat.createWithResource(app, R.mipmap.ic_launcher))
                     .setCategories(setOf("com.carmap.bridge.SHARE_TO_CAR_BOX"))
                     .setLongLived(true)
                     .setIntent(

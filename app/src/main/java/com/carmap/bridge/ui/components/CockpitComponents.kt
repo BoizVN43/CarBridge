@@ -92,21 +92,21 @@ fun SettingsGroupCard(
     title: String,
     content: @Composable () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text(
             text = title,
-            fontSize = 11.sp,
+            fontSize = 10.5.sp,
             fontWeight = FontWeight.Bold,
-            letterSpacing = 0.8.sp,
+            letterSpacing = 0.7.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 6.dp)
+            modifier = Modifier.padding(start = 4.dp)
         )
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(18.dp),
             color = MaterialTheme.colorScheme.surface
         ) {
-            Column(modifier = Modifier.padding(14.dp)) {
+            Column(modifier = Modifier.padding(12.dp)) {
                 content()
             }
         }
@@ -121,19 +121,19 @@ fun SettingsIconCircle(
 ) {
     Box(
         modifier = Modifier
-            .size(36.dp)
+            .size(34.dp)
             .clip(CircleShape)
             .background(bg),
         contentAlignment = Alignment.Center
     ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
     }
 }
 
 @Composable
 fun SettingsDivider() {
     HorizontalDivider(
-        modifier = Modifier.padding(vertical = 8.dp),
+        modifier = Modifier.padding(vertical = 6.dp),
         color = MaterialTheme.colorScheme.outline
     )
 }
@@ -207,14 +207,14 @@ fun CockpitFloatingNavBar(
 
     Surface(
         modifier = modifier
-            .widthIn(max = 440.dp)
+            .widthIn(max = if (tabs.size <= 2) 300.dp else 440.dp)
             .fillMaxWidth()
-            .height(if (adaptive.isLandscape) 56.dp else 64.dp)
+            .height(if (adaptive.isLandscape) 50.dp else 56.dp)
             .shadow(
-                elevation = if (accents.isDark) 18.dp else 14.dp,
+                elevation = if (accents.isDark) 14.dp else 10.dp,
                 shape = RoundedCornerShape(999.dp),
-                ambientColor = Color.Black.copy(alpha = 0.25f),
-                spotColor = Color.Black.copy(alpha = 0.25f)
+                ambientColor = Color.Black.copy(alpha = 0.22f),
+                spotColor = Color.Black.copy(alpha = 0.22f)
             ),
         shape = RoundedCornerShape(999.dp),
         color = barBg,

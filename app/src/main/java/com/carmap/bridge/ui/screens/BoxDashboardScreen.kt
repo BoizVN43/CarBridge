@@ -75,7 +75,7 @@ fun BoxDashboardScreen(
                     .widthIn(max = 1120.dp)
                     .fillMaxSize()
                     .padding(horizontal = adaptive.screenPadding)
-                    .padding(top = 10.dp),
+                    .padding(top = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
             ) {
                 Column(
@@ -111,7 +111,7 @@ fun BoxDashboardScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
                     start = adaptive.screenPadding,
-                    top = 10.dp,
+                    top = 6.dp,
                     end = adaptive.screenPadding,
                     bottom = adaptive.navBottomPadding
                 ),
@@ -189,9 +189,9 @@ private fun BoxStatusHeroCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(Brush.verticalGradient(listOf(accents.heroObsidianTop, accents.heroObsidian)))
-                .padding(adaptive.dp(16f))
+                .padding(adaptive.dp(12f))
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -312,13 +312,13 @@ private fun HistorySectionTitle(accents: CockpitAccents, adaptive: AdaptiveMetri
 private fun EmptyHistoryCard(adaptive: AdaptiveMetrics) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surface
     ) {
         Column(
-            modifier = Modifier.padding(22.dp),
+            modifier = Modifier.padding(14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text("Chưa có điểm đến nào", fontSize = adaptive.sp(14f), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
             Text(

@@ -15,6 +15,7 @@ object AppPreferences {
     private const val KEY_DEVICE_INSTANCE_ID = "device_instance_id"
     private const val KEY_THEME_MODE = "theme_mode"
     private const val KEY_ROLE = "device_role"
+    private const val KEY_ROLE_CONFIGURED = "device_role_configured"
     private const val KEY_BOX_NAME = "box_name"
     private const val KEY_PAIRING_PIN = "pairing_pin"
     private const val KEY_BLE_ENABLED = "ble_enabled"
@@ -82,6 +83,7 @@ object AppPreferences {
         return BridgeUiState(
             themeMode = theme,
             role = role,
+            roleConfigured = p.getBoolean(KEY_ROLE_CONFIGURED, false),
             boxName = p.getString(KEY_BOX_NAME, "Android Box Mazda CX-5") ?: "Android Box Mazda CX-5",
             pairingPin = p.getString(KEY_PAIRING_PIN, "2689") ?: "2689",
             bleEnabled = p.getBoolean(KEY_BLE_ENABLED, true),
@@ -98,6 +100,7 @@ object AppPreferences {
         prefs(context).edit().apply {
             putString(KEY_THEME_MODE, state.themeMode.name)
             putString(KEY_ROLE, state.role.name)
+            putBoolean(KEY_ROLE_CONFIGURED, state.roleConfigured)
             putString(KEY_BOX_NAME, state.boxName)
             putString(KEY_PAIRING_PIN, state.pairingPin)
             putBoolean(KEY_BLE_ENABLED, state.bleEnabled)

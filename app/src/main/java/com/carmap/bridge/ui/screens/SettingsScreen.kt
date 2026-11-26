@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
@@ -30,6 +29,7 @@ import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -67,6 +67,8 @@ import com.carmap.bridge.ui.theme.AdaptiveMetrics
 import com.carmap.bridge.ui.theme.CockpitAccents
 import com.carmap.bridge.ui.theme.LocalAdaptiveMetrics
 import com.carmap.bridge.ui.theme.LocalCockpitAccents
+import com.carmap.bridge.update.AppUpdater
+import com.carmap.bridge.update.RemoteReleaseInfo
 
 @Composable
 fun SettingsScreen(
@@ -74,6 +76,9 @@ fun SettingsScreen(
     canDrawOverlays: Boolean,
     installedMaps: Map<MapProvider, Boolean>,
     bleStatus: BleStatus,
+    availableUpdate: RemoteReleaseInfo?,
+    onSwitchRole: (DeviceRole) -> Unit,
+    onCheckUpdate: () -> Unit,
     onToggleBoxService: (Boolean) -> Unit,
     onToggleBle: (Boolean) -> Unit,
     onRequestBlePermissions: () -> Unit,
@@ -84,6 +89,8 @@ fun SettingsScreen(
     val accents = LocalCockpitAccents.current
     val adaptive = LocalAdaptiveMetrics.current
     var manualIp by remember { mutableStateOf("") }
+    val installedVersion = remember { AppUpdater.getInstalledVersion(context) }
+    val isPhone = state.role == DeviceRole.PHONE_SENDER
 
     val hasNotificationPerm = remember(state.boxServiceRunning) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -104,7 +111,7 @@ fun SettingsScreen(
                     .widthIn(max = 1120.dp)
                     .fillMaxSize()
                     .padding(horizontal = adaptive.screenPadding)
-                    .padding(top = 10.dp),
+                    .padding(top = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
             ) {
                 Column(
@@ -114,21 +121,13 @@ fun SettingsScreen(
                         .padding(bottom = adaptive.navBottomPadding),
                     verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
                 ) {
-                    SettingsHeader(adaptive, accents)
-                    AppearanceSettingsCard(state, accents, adaptive)
-                    BoxConnectionSettingsCard(
-                        state = state,
-                        manualIp = manualIp,
+                    SettingsHeader(installedVersion.versionName, state.role, adaptive, accents)
+                    AppearanceAndRoleCard(state, accents, adaptive, onSwitchRole)
+                    OtaUpdateCard(
+                        versionName = installedVersion.versionName,
+                        availableUpdate = availableUpdate,
                         accents = accents,
-                        adaptive = adaptive,
-                        onManualIpChange = { manualIp = it },
-                        onPairManual = {
-                            if (manualIp.isNotBlank()) {
-                                BridgeRepository.addManualBox(context, manualIp, "Android Box ($manualIp)")
-                                manualIp = ""
-                            }
-                        },
-                        onToggleBle = onToggleBle
+                        onCheckUpdate = onCheckUpdate
                     )
                 }
                 Column(
@@ -138,17 +137,40 @@ fun SettingsScreen(
                         .padding(bottom = adaptive.navBottomPadding),
                     verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
                 ) {
-                    AutoLaunchSettingsCard(state, accents, adaptive, onToggleBoxService)
-                    PermissionsAndAppsCard(
-                        canDrawOverlays = canDrawOverlays,
-                        hasNotificationPerm = hasNotificationPerm,
-                        installedMaps = installedMaps,
-                        bleStatus = bleStatus,
-                        accents = accents,
-                        onRequestOverlayPermission = onRequestOverlayPermission,
-                        onRequestNotificationPermission = onRequestNotificationPermission,
-                        onRequestBlePermissions = onRequestBlePermissions
-                    )
+                    if (isPhone) {
+                        PhoneConnectionSettingsCard(
+                            state = state,
+                            manualIp = manualIp,
+                            accents = accents,
+                            adaptive = adaptive,
+                            onManualIpChange = { manualIp = it },
+                            onPairManual = {
+                                if (manualIp.isNotBlank()) {
+                                    BridgeRepository.addManualBox(context, manualIp, "Android Box ($manualIp)")
+                                    manualIp = ""
+                                }
+                            },
+                            onToggleBle = onToggleBle
+                        )
+                        PhonePermissionsCard(
+                            bleStatus = bleStatus,
+                            accents = accents,
+                            onRequestBlePermissions = onRequestBlePermissions
+                        )
+                    } else {
+                        BoxIdentitySettingsCard(state, adaptive, onToggleBle)
+                        AutoLaunchSettingsCard(state, accents, adaptive, onToggleBoxService)
+                        BoxPermissionsAndAppsCard(
+                            canDrawOverlays = canDrawOverlays,
+                            hasNotificationPerm = hasNotificationPerm,
+                            installedMaps = installedMaps,
+                            bleStatus = bleStatus,
+                            accents = accents,
+                            onRequestOverlayPermission = onRequestOverlayPermission,
+                            onRequestNotificationPermission = onRequestNotificationPermission,
+                            onRequestBlePermissions = onRequestBlePermissions
+                        )
+                    }
                 }
             }
         } else {
@@ -156,85 +178,146 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
                     start = adaptive.screenPadding,
-                    top = 10.dp,
+                    top = 6.dp,
                     end = adaptive.screenPadding,
                     bottom = adaptive.navBottomPadding
                 ),
                 verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
             ) {
-                item { SettingsHeader(adaptive, accents) }
-                item { AppearanceSettingsCard(state, accents, adaptive) }
+                item { SettingsHeader(installedVersion.versionName, state.role, adaptive, accents) }
                 item {
-                    BoxConnectionSettingsCard(
-                        state = state,
-                        manualIp = manualIp,
+                    OtaUpdateCard(
+                        versionName = installedVersion.versionName,
+                        availableUpdate = availableUpdate,
                         accents = accents,
-                        adaptive = adaptive,
-                        onManualIpChange = { manualIp = it },
-                        onPairManual = {
-                            if (manualIp.isNotBlank()) {
-                                BridgeRepository.addManualBox(context, manualIp, "Android Box ($manualIp)")
-                                manualIp = ""
-                            }
-                        },
-                        onToggleBle = onToggleBle
+                        onCheckUpdate = onCheckUpdate
                     )
                 }
-                item { AutoLaunchSettingsCard(state, accents, adaptive, onToggleBoxService) }
-                item {
-                    PermissionsAndAppsCard(
-                        canDrawOverlays = canDrawOverlays,
-                        hasNotificationPerm = hasNotificationPerm,
-                        installedMaps = installedMaps,
-                        bleStatus = bleStatus,
-                        accents = accents,
-                        onRequestOverlayPermission = onRequestOverlayPermission,
-                        onRequestNotificationPermission = onRequestNotificationPermission,
-                        onRequestBlePermissions = onRequestBlePermissions
-                    )
+                if (isPhone) {
+                    item {
+                        PhoneConnectionSettingsCard(
+                            state = state,
+                            manualIp = manualIp,
+                            accents = accents,
+                            adaptive = adaptive,
+                            onManualIpChange = { manualIp = it },
+                            onPairManual = {
+                                if (manualIp.isNotBlank()) {
+                                    BridgeRepository.addManualBox(context, manualIp, "Android Box ($manualIp)")
+                                    manualIp = ""
+                                }
+                            },
+                            onToggleBle = onToggleBle
+                        )
+                    }
+                    item {
+                        PhonePermissionsCard(
+                            bleStatus = bleStatus,
+                            accents = accents,
+                            onRequestBlePermissions = onRequestBlePermissions
+                        )
+                    }
+                } else {
+                    item { BoxIdentitySettingsCard(state, adaptive, onToggleBle) }
+                    item { AutoLaunchSettingsCard(state, accents, adaptive, onToggleBoxService) }
+                    item {
+                        BoxPermissionsAndAppsCard(
+                            canDrawOverlays = canDrawOverlays,
+                            hasNotificationPerm = hasNotificationPerm,
+                            installedMaps = installedMaps,
+                            bleStatus = bleStatus,
+                            accents = accents,
+                            onRequestOverlayPermission = onRequestOverlayPermission,
+                            onRequestNotificationPermission = onRequestNotificationPermission,
+                            onRequestBlePermissions = onRequestBlePermissions
+                        )
+                    }
                 }
+                item { AppearanceAndRoleCard(state, accents, adaptive, onSwitchRole) }
             }
         }
     }
 }
 
 @Composable
-private fun SettingsHeader(adaptive: AdaptiveMetrics, accents: CockpitAccents) {
+private fun SettingsHeader(
+    versionName: String,
+    role: DeviceRole,
+    adaptive: AdaptiveMetrics,
+    accents: CockpitAccents
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = "Cài đặt",
-            fontSize = adaptive.sp(22f),
-            fontWeight = FontWeight.ExtraBold,
-            color = MaterialTheme.colorScheme.onBackground
-        )
+        Column {
+            Text(
+                text = "Cài đặt",
+                fontSize = adaptive.sp(20f),
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Text(
+                text = if (role == DeviceRole.PHONE_SENDER) "Chế độ Điện thoại" else "Chế độ Android Box",
+                fontSize = adaptive.sp(11.5f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surface) {
             Text(
-                text = "CarBridge v1.0",
+                text = "v$versionName",
                 fontSize = adaptive.sp(11f),
                 fontWeight = FontWeight.Bold,
                 color = accents.emerald,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
             )
         }
     }
 }
 
 @Composable
-private fun AppearanceSettingsCard(
+private fun OtaUpdateCard(
+    versionName: String,
+    availableUpdate: RemoteReleaseInfo?,
+    accents: CockpitAccents,
+    onCheckUpdate: () -> Unit
+) {
+    SettingsGroupCard(title = "CẬP NHẬT OTA") {
+        SettingsActionRow(
+            icon = Icons.Rounded.SystemUpdate,
+            tint = if (availableUpdate != null) accents.emerald else accents.cyan,
+            bg = if (availableUpdate != null) accents.emeraldContainer else accents.cyanContainer,
+            title = if (availableUpdate != null) {
+                "Có bản mới v${availableUpdate.versionName}"
+            } else {
+                "Kiểm tra cập nhật trực tuyến"
+            },
+            subtitle = if (availableUpdate != null) {
+                "Nhấn để tải và cài đè từ GitHub Releases"
+            } else {
+                "Hiện tại: CarBridge v$versionName · GitHub Releases"
+            },
+            trailingText = if (availableUpdate != null) "Cập nhật" else "Kiểm tra",
+            trailingHighlight = availableUpdate != null,
+            onClick = onCheckUpdate
+        )
+    }
+}
+
+@Composable
+private fun AppearanceAndRoleCard(
     state: BridgeUiState,
     accents: CockpitAccents,
-    adaptive: AdaptiveMetrics
+    adaptive: AdaptiveMetrics,
+    onSwitchRole: (DeviceRole) -> Unit
 ) {
-    SettingsGroupCard(title = "GIAO DIỆN") {
+    SettingsGroupCard(title = "GIAO DIỆN & THIẾT BỊ") {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(42.dp),
-            shape = RoundedCornerShape(14.dp),
+                .height(38.dp),
+            shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surfaceVariant
         ) {
             Row(
@@ -250,7 +333,7 @@ private fun AppearanceSettingsCard(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .clip(RoundedCornerShape(11.dp))
+                            .clip(RoundedCornerShape(9.dp))
                             .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
                             .clickable { BridgeRepository.setThemeMode(mode) },
                         contentAlignment = Alignment.Center
@@ -259,8 +342,8 @@ private fun AppearanceSettingsCard(
                             text = mode.label,
                             style = TextStyle(
                                 fontFeatureSettings = "tnum",
-                                fontSize = adaptive.sp(12.5f),
-                                lineHeight = adaptive.sp(15f),
+                                fontSize = adaptive.sp(12f),
+                                lineHeight = adaptive.sp(14f),
                                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                 platformStyle = PlatformTextStyle(includeFontPadding = false)
                             ),
@@ -273,19 +356,19 @@ private fun AppearanceSettingsCard(
             }
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
-            text = "Vai trò thiết bị mặc định",
-            fontSize = adaptive.sp(12f),
+            text = "Đổi vai trò thiết bị",
+            fontSize = adaptive.sp(11.5f),
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(Modifier.height(6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Spacer(Modifier.height(5.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             DeviceRole.entries.forEach { role ->
                 val active = state.role == role
                 CockpitPill(
-                    onClick = { BridgeRepository.setRole(role) },
+                    onClick = { onSwitchRole(role) },
                     shape = RoundedCornerShape(999.dp),
                     color = if (active) accents.emeraldContainer else MaterialTheme.colorScheme.surfaceVariant
                 ) {
@@ -294,7 +377,7 @@ private fun AppearanceSettingsCard(
                         fontSize = adaptive.sp(11.5f),
                         fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
                         color = if (active) accents.emerald else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
                     )
                 }
             }
@@ -304,7 +387,7 @@ private fun AppearanceSettingsCard(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun BoxConnectionSettingsCard(
+private fun PhoneConnectionSettingsCard(
     state: BridgeUiState,
     manualIp: String,
     accents: CockpitAccents,
@@ -315,36 +398,17 @@ private fun BoxConnectionSettingsCard(
 ) {
     val context = LocalContext.current
     SettingsGroupCard(title = "KẾT NỐI ANDROID BOX") {
-        OutlinedTextField(
-            value = state.boxName,
-            onValueChange = { BridgeRepository.updateSettings(boxName = it) },
-            label = { Text("Tên Android Box trên xe") },
-            singleLine = true,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
-            value = state.pairingPin,
-            onValueChange = { BridgeRepository.updateSettings(pin = it.take(6)) },
-            label = { Text("Mã PIN ghép nối nhanh") },
-            singleLine = true,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth()
-        )
-        SettingsDivider()
-
         Text(
-            text = "Thiết bị tìm thấy (LAN / BLE)",
-            fontSize = adaptive.sp(12f),
+            text = "Box tìm thấy gần đây (LAN / BLE)",
+            fontSize = adaptive.sp(11.5f),
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(5.dp))
         if (state.discoveredBoxes.isEmpty()) {
             Text(
-                text = "Chưa tìm thấy Box nào gần đây.",
-                fontSize = adaptive.sp(12f),
+                text = "Chưa tìm thấy Box nào. Hãy mở CarBridge trên Android Box.",
+                fontSize = adaptive.sp(11.5f),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
@@ -364,14 +428,14 @@ private fun BoxConnectionSettingsCard(
                             fontSize = adaptive.sp(11.5f),
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                             color = if (selected) accents.emerald else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                         )
                     }
                 }
             }
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -380,13 +444,14 @@ private fun BoxConnectionSettingsCard(
                 value = manualIp,
                 onValueChange = onManualIpChange,
                 label = { Text("IP Box (tùy chọn)") },
+                placeholder = { Text("VD: 192.168.1.20") },
                 singleLine = true,
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.weight(1f)
             )
             Button(
                 onClick = onPairManual,
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF10B981),
                     contentColor = Color.White
@@ -407,10 +472,70 @@ private fun BoxConnectionSettingsCard(
         SettingsDivider()
         SettingsToggleRow(
             title = "Ưu tiên BLE thay vì LAN",
-            subtitle = "Dùng Bluetooth thay Wi-Fi khi gửi link",
+            subtitle = "Gửi qua Bluetooth trước thay vì Wi-Fi",
             checked = state.preferBleOverLan,
             adaptive = adaptive,
             onCheckedChange = { BridgeRepository.setPreferBleOverLan(it) }
+        )
+    }
+}
+
+@Composable
+private fun PhonePermissionsCard(
+    bleStatus: BleStatus,
+    accents: CockpitAccents,
+    onRequestBlePermissions: () -> Unit
+) {
+    SettingsGroupCard(title = "QUYỀN KẾT NỐI") {
+        SettingsActionRow(
+            icon = Icons.Rounded.Bluetooth,
+            tint = if (bleStatus.permissionsGranted && bleStatus.hardwareSupported) accents.emerald else accents.amber,
+            bg = if (bleStatus.permissionsGranted && bleStatus.hardwareSupported) accents.emeraldContainer else accents.amberContainer,
+            title = "Bluetooth LE",
+            subtitle = bleStatus.note,
+            trailingText = when {
+                !bleStatus.hardwareSupported -> "Không có HW"
+                !bleStatus.permissionsGranted -> "Cấp quyền"
+                bleStatus.scanningActive -> "Đang quét"
+                else -> "Sẵn sàng"
+            },
+            trailingHighlight = bleStatus.permissionsGranted && bleStatus.hardwareSupported,
+            onClick = onRequestBlePermissions
+        )
+    }
+}
+
+@Composable
+private fun BoxIdentitySettingsCard(
+    state: BridgeUiState,
+    adaptive: AdaptiveMetrics,
+    onToggleBle: (Boolean) -> Unit
+) {
+    SettingsGroupCard(title = "CẤU HÌNH ANDROID BOX") {
+        OutlinedTextField(
+            value = state.boxName,
+            onValueChange = { BridgeRepository.updateSettings(boxName = it) },
+            label = { Text("Tên Android Box trên xe") },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = state.pairingPin,
+            onValueChange = { BridgeRepository.updateSettings(pin = it.take(6)) },
+            label = { Text("Mã PIN ghép nối nhanh") },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        )
+        SettingsDivider()
+        SettingsToggleRow(
+            title = "Phát sóng Bluetooth LE (BLE)",
+            subtitle = "Cho phép điện thoại gửi link khi không chung Wi-Fi",
+            checked = state.bleEnabled,
+            adaptive = adaptive,
+            onCheckedChange = onToggleBle
         )
     }
 }
@@ -450,16 +575,16 @@ private fun AutoLaunchSettingsCard(
 
         Text(
             text = "App bản đồ ưu tiên mặc định trên Box",
-            fontSize = adaptive.sp(12f),
+            fontSize = adaptive.sp(11.5f),
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             listOf(MapProvider.AUTO, MapProvider.GOOGLE_MAPS, MapProvider.WAZE, MapProvider.VIETMAP).forEach { target ->
                 val active = state.boxPreferredTarget == target
@@ -470,10 +595,10 @@ private fun AutoLaunchSettingsCard(
                 ) {
                     Text(
                         text = target.displayName,
-                        fontSize = adaptive.sp(11.5f),
+                        fontSize = adaptive.sp(11f),
                         fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
                         color = if (active) accents.emerald else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                     )
                 }
             }
@@ -482,7 +607,7 @@ private fun AutoLaunchSettingsCard(
 }
 
 @Composable
-private fun PermissionsAndAppsCard(
+private fun BoxPermissionsAndAppsCard(
     canDrawOverlays: Boolean,
     hasNotificationPerm: Boolean,
     installedMaps: Map<MapProvider, Boolean>,
@@ -519,7 +644,7 @@ private fun PermissionsAndAppsCard(
             icon = Icons.Rounded.Map,
             tint = accents.cyan,
             bg = accents.cyanContainer,
-            title = "Ứng dụng bản đồ trên thiết bị",
+            title = "Ứng dụng bản đồ trên Box",
             subtitle = installedMaps.entries.joinToString(" · ") { (k, v) ->
                 "${k.displayName}: ${if (v) "Có" else "Chưa cài"}"
             },
@@ -537,7 +662,7 @@ private fun PermissionsAndAppsCard(
             trailingText = when {
                 !bleStatus.hardwareSupported -> "Không có HW"
                 !bleStatus.permissionsGranted -> "Cấp quyền"
-                bleStatus.advertisingActive || bleStatus.scanningActive -> "Đang chạy"
+                bleStatus.advertisingActive -> "Đang phát"
                 else -> "Sẵn sàng"
             },
             trailingHighlight = bleStatus.permissionsGranted && bleStatus.hardwareSupported,
@@ -559,9 +684,9 @@ private fun SettingsToggleRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(title, fontSize = adaptive.sp(14f), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-            Text(subtitle, fontSize = adaptive.sp(11.5f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+            Text(title, fontSize = adaptive.sp(13.5f), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+            Text(subtitle, fontSize = adaptive.sp(11f), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
