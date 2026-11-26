@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -44,13 +45,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import com.carmap.bridge.data.BridgeRepository
 import com.carmap.bridge.launcher.MapIntentLauncher
 import com.carmap.bridge.model.DeviceRole
 import com.carmap.bridge.model.LinkKind
+import com.carmap.bridge.model.MapProvider
 import com.carmap.bridge.network.BlePermissionsHelper
 import com.carmap.bridge.network.CarBridgeConnectionManager
 import com.carmap.bridge.parser.MediaLinkHelper
@@ -64,10 +68,13 @@ import com.carmap.bridge.ui.screens.RoleSelectionScreen
 import com.carmap.bridge.ui.screens.SettingsScreen
 import com.carmap.bridge.ui.theme.CarMapTheme
 import com.carmap.bridge.update.AppUpdater
+import com.carmap.bridge.util.CarBridgeNotifier
 import com.carmap.bridge.util.PairingCodeHelper
+import com.carmap.bridge.widget.CarBridgeWidgetProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class MainActivity : ComponentActivity() {
 
@@ -82,13 +89,119 @@ class MainActivity : ComponentActivity() {
         onBlePermResult?.invoke()
     }
 
+    private val locationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val granted = grants.values.any { it }
+        if (granted) {
+            val saved = CarBridgeConnectionManager.saveParkingPinNow(this, "Vị trí đỗ xe")
+            BridgeRepository.setStatusBanner(
+                if (saved) "Đã ghim vị trí đỗ xe hiện tại" else "Chưa lấy được tín hiệu GPS, hãy bật Vị trí"
+            )
+        }
+    }
+
+    private val voiceRecognizerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode != RESULT_OK) return@registerForActivityResult
+        val spoken = result.data
+            ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            ?.firstOrNull()
+            ?.trim()
+            .orEmpty()
+        if (spoken.isNotBlank()) {
+            lifecycleScope.launch {
+                val state = BridgeRepository.state.value
+                BridgeRepository.setStatusBanner("Giọng nói: \"$spoken\" — đang gửi lên Box...")
+                CarBridgeConnectionManager.sendOrQueue(
+                    context = this@MainActivity,
+                    primaryBox = state.pairedBox ?: state.discoveredBoxes.firstOrNull(),
+                    rawText = spoken,
+                    preferredTarget = state.phoneTargetOverride
+                )
+            }
+        }
+    }
+
+    private val filePickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        lifecycleScope.launch {
+            CarBridgeConnectionManager.sendFileUriToBox(this@MainActivity, uri)
+        }
+    }
+
     private var lastDismissedClipboard: String? = null
     private val clipboardSuggestionState = mutableStateOf<String?>(null)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingActionIntent(intent)
+    }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
             inspectClipboardForSuggestion()
+        }
+    }
+
+    private fun startVoiceSearch() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "vi-VN")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Nói địa chỉ hoặc địa điểm muốn đến...")
+        }
+        runCatching { voiceRecognizerLauncher.launch(intent) }.onFailure {
+            Toast.makeText(this, "Thiết bị chưa cài nhận diện giọng nói Google", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun handleIncomingActionIntent(intent: Intent?) {
+        if (intent == null) return
+        if (intent.getBooleanExtra(CarBridgeNotifier.EXTRA_OPEN_OTA, false)) {
+            intent.removeExtra(CarBridgeNotifier.EXTRA_OPEN_OTA)
+            AppUpdater.loadCachedAvailability(this)
+            if (AppUpdater.availableUpdate.value != null) {
+                AppUpdater.openUpdateDialog()
+            } else {
+                lifecycleScope.launch {
+                    AppUpdater.checkForUpdate(this@MainActivity, silent = false, forceBypassCooldown = true)
+                }
+            }
+        }
+        if (intent.getBooleanExtra(CarBridgeNotifier.EXTRA_START_VOICE, false)) {
+            intent.removeExtra(CarBridgeNotifier.EXTRA_START_VOICE)
+            startVoiceSearch()
+        }
+        if (intent.getBooleanExtra(CarBridgeNotifier.EXTRA_SEND_CLIPBOARD, false)) {
+            intent.removeExtra(CarBridgeNotifier.EXTRA_SEND_CLIPBOARD)
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }
+                ?.getItemAt(0)?.coerceToText(this)?.toString()?.trim().orEmpty()
+            if (clip.isNotBlank()) {
+                lifecycleScope.launch {
+                    CarBridgeConnectionManager.sendClipboardToBox(this@MainActivity, clip)
+                }
+            } else {
+                Toast.makeText(this, "Clipboard đang trống", Toast.LENGTH_SHORT).show()
+            }
+        }
+        val savedLink = intent.getStringExtra(CarBridgeWidgetProvider.EXTRA_SEND_SAVED_LINK)
+        if (!savedLink.isNullOrBlank()) {
+            intent.removeExtra(CarBridgeWidgetProvider.EXTRA_SEND_SAVED_LINK)
+            lifecycleScope.launch {
+                val st = BridgeRepository.state.value
+                CarBridgeConnectionManager.sendOrQueue(
+                    context = this@MainActivity,
+                    primaryBox = st.pairedBox ?: st.discoveredBoxes.firstOrNull(),
+                    rawText = savedLink,
+                    preferredTarget = st.phoneTargetOverride
+                )
+            }
         }
     }
 
@@ -117,6 +230,8 @@ class MainActivity : ComponentActivity() {
                 notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
+
+        handleIncomingActionIntent(intent)
 
         setContent {
             val state by BridgeRepository.state.collectAsState()
@@ -186,7 +301,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            var installedMaps by remember { mutableStateOf<Map<com.carmap.bridge.model.MapProvider, Boolean>>(emptyMap()) }
+            var installedMaps by remember { mutableStateOf<Map<MapProvider, Boolean>>(emptyMap()) }
             LaunchedEffect(Unit) {
                 installedMaps = withContext(Dispatchers.IO) {
                     MapIntentLauncher.isAnyMapAppInstalled(this@MainActivity)
@@ -268,9 +383,53 @@ class MainActivity : ComponentActivity() {
                                                     }
                                                 }
                                             },
+                                            onStartVoiceSearch = { startVoiceSearch() },
                                             onSendClipboardText = { text ->
                                                 scope.launch {
                                                     CarBridgeConnectionManager.sendClipboardToBox(this@MainActivity, text)
+                                                }
+                                            },
+                                            onPullClipboardFromBox = {
+                                                scope.launch {
+                                                    CarBridgeConnectionManager.pullClipboardFromBox(this@MainActivity)
+                                                }
+                                            },
+                                            onPickFileToSend = {
+                                                filePickerLauncher.launch(
+                                                    arrayOf(
+                                                        "application/vnd.android.package-archive",
+                                                        "image/*"
+                                                    )
+                                                )
+                                            },
+                                            onSaveParkingPin = {
+                                                val ok = CarBridgeConnectionManager.saveParkingPinNow(this@MainActivity, "Vị trí đỗ xe")
+                                                if (ok) {
+                                                    BridgeRepository.setStatusBanner("Đã ghim vị trí đỗ xe hiện tại")
+                                                } else {
+                                                    locationPermissionLauncher.launch(
+                                                        arrayOf(
+                                                            Manifest.permission.ACCESS_FINE_LOCATION,
+                                                            Manifest.permission.ACCESS_COARSE_LOCATION
+                                                        )
+                                                    )
+                                                }
+                                            },
+                                            onFindParkedCar = {
+                                                val pin = state.parkingPin ?: return@PhoneSenderScreen
+                                                val uri = Uri.parse("google.navigation:q=${pin.lat},${pin.lng}&mode=w")
+                                                val navIntent = Intent(Intent.ACTION_VIEW, uri).apply {
+                                                    setPackage("com.google.android.apps.maps")
+                                                }
+                                                runCatching { startActivity(navIntent) }.onFailure {
+                                                    runCatching {
+                                                        startActivity(
+                                                            Intent(
+                                                                Intent.ACTION_VIEW,
+                                                                Uri.parse("geo:${pin.lat},${pin.lng}?q=${pin.lat},${pin.lng}(Xe)")
+                                                            )
+                                                        )
+                                                    }
                                                 }
                                             },
                                             onPingBox = {
@@ -301,12 +460,36 @@ class MainActivity : ComponentActivity() {
                                             onOpenSettings = { selectedTab = 1 },
                                             onReplayRecord = { rec ->
                                                 when (rec.parsed.kind) {
-                                                    LinkKind.MEDIA -> {
+                                                    LinkKind.MEDIA, LinkKind.WEB -> {
                                                         runCatching {
                                                             startActivity(
                                                                 Intent(Intent.ACTION_VIEW, Uri.parse(rec.parsed.resolvedUrl))
                                                                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                                             )
+                                                        }
+                                                    }
+                                                    LinkKind.FILE -> {
+                                                        val f = File(rec.parsed.resolvedUrl)
+                                                        if (f.exists()) {
+                                                            if (f.name.endsWith(".apk", ignoreCase = true)) {
+                                                                AppUpdater.launchApkInstaller(this@MainActivity, f)
+                                                            } else {
+                                                                runCatching {
+                                                                    val uri = FileProvider.getUriForFile(
+                                                                        this@MainActivity,
+                                                                        "${packageName}.fileprovider",
+                                                                        f
+                                                                    )
+                                                                    startActivity(
+                                                                        Intent(Intent.ACTION_VIEW).apply {
+                                                                            setDataAndType(uri, "image/*")
+                                                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                                        }
+                                                                    )
+                                                                }
+                                                            }
+                                                        } else {
+                                                            Toast.makeText(this@MainActivity, "Tệp không còn trong bộ nhớ đệm", Toast.LENGTH_SHORT).show()
                                                         }
                                                     }
                                                     LinkKind.CLIPBOARD -> {

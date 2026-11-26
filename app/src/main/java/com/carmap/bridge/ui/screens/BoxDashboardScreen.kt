@@ -596,6 +596,8 @@ private fun HistoryItemRow(
                     Text(
                         text = when (rec.parsed.kind) {
                             LinkKind.MEDIA -> "Media"
+                            LinkKind.WEB -> "Web"
+                            LinkKind.FILE -> "Tệp / APK"
                             LinkKind.CLIPBOARD -> "Clipboard"
                             else -> rec.targetProvider.displayName
                         },
@@ -643,7 +645,7 @@ private fun HistoryItemRow(
                     Spacer(Modifier.width(4.dp))
                     Text(
                         text = when (rec.parsed.kind) {
-                            LinkKind.MEDIA -> "Mở"
+                            LinkKind.MEDIA, LinkKind.WEB, LinkKind.FILE -> "Mở"
                             LinkKind.CLIPBOARD -> "Chép"
                             else -> "Dẫn đường"
                         },

@@ -17,8 +17,13 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.BufferedReader
 import java.io.BufferedWriter
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.DatagramPacket
@@ -106,7 +111,8 @@ class BoxServerTransport(
     private val scope: CoroutineScope,
     private val boxIdProvider: () -> String,
     private val boxNameProvider: () -> String,
-    private val onPacketReceived: suspend (IncomingMapPacket, String) -> Pair<Boolean, String>
+    private val onPacketReceived: suspend (IncomingMapPacket, String) -> Pair<Boolean, String>,
+    private val onFileReceived: suspend (fileName: String, mimeType: String, file: File, pin: String, remoteIp: String) -> Pair<Boolean, String> = { _, _, _, _, _ -> false to "Chưa hỗ trợ nhận tệp" }
 ) {
     private var serverSocket: ServerSocket? = null
     private var udpBeaconSocket: DatagramSocket? = null
@@ -238,18 +244,69 @@ class BoxServerTransport(
     private suspend fun handleClient(socket: Socket) {
         socket.use { s ->
             s.tcpNoDelay = true
-            s.soTimeout = 5000
-            val reader = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8))
+            s.soTimeout = 15_000
+            val rawIn = BufferedInputStream(s.getInputStream(), 32 * 1024)
             val writer = BufferedWriter(OutputStreamWriter(s.getOutputStream(), Charsets.UTF_8))
-            val line = reader.readLine() ?: return
+            val line = readHeaderLine(rawIn) ?: return
             val json = JSONObject(line)
-            if (json.optString("type") == "PING") {
+            val msgType = json.optString("type")
+            if (msgType == "PING") {
                 val pong = JSONObject().apply {
                     put("ok", true)
                     put("id", boxIdProvider())
                     put("boxName", boxNameProvider())
                 }.toString()
                 writer.write(pong)
+                writer.newLine()
+                writer.flush()
+                return
+            }
+
+            if (msgType == "FILE_TRANSFER") {
+                val pin = json.optString("pin", "")
+                val rawName = json.optString("fileName", "carbridge_file.bin")
+                val safeName = rawName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "file.bin" }
+                val mimeType = json.optString("mimeType", "application/octet-stream")
+                val fileSize = json.optLong("fileSize", -1L)
+                val remoteIp = s.inetAddress?.hostAddress ?: "LAN"
+
+                if (fileSize <= 0L || fileSize > 180L * 1024L * 1024L) {
+                    val err = JSONObject().apply {
+                        put("ok", false)
+                        put("message", "Dung lượng tệp không hợp lệ (tối đa 180MB)")
+                    }.toString()
+                    writer.write(err)
+                    writer.newLine()
+                    writer.flush()
+                    return
+                }
+
+                val dir = File(context.cacheDir, "received_files").apply { mkdirs() }
+                val outFile = File(dir, safeName)
+                var remaining = fileSize
+                val buf = ByteArray(32 * 1024)
+                outFile.outputStream().buffered(32 * 1024).use { out ->
+                    while (remaining > 0L) {
+                        val toRead = minOf(buf.size.toLong(), remaining).toInt()
+                        val n = rawIn.read(buf, 0, toRead)
+                        if (n <= 0) break
+                        out.write(buf, 0, n)
+                        remaining -= n
+                    }
+                    out.flush()
+                }
+                val (ok, message) = if (remaining == 0L) {
+                    onFileReceived(safeName, mimeType, outFile, pin, remoteIp)
+                } else {
+                    outFile.delete()
+                    false to "Truyền tệp bị gián đoạn giữa chừng"
+                }
+                val resp = JSONObject().apply {
+                    put("ok", ok)
+                    put("boxName", boxNameProvider())
+                    put("message", message)
+                }.toString()
+                writer.write(resp)
                 writer.newLine()
                 writer.flush()
                 return
@@ -278,6 +335,17 @@ class BoxServerTransport(
             writer.newLine()
             writer.flush()
         }
+    }
+
+    private fun readHeaderLine(input: InputStream): String? {
+        val baos = ByteArrayOutputStream(256)
+        while (baos.size() < 65_536) {
+            val b = input.read()
+            if (b == -1) return if (baos.size() == 0) null else baos.toString("UTF-8")
+            if (b == '\n'.code) break
+            if (b != '\r'.code) baos.write(b)
+        }
+        return baos.toString("UTF-8")
     }
 
     private fun reRegisterNsd() {
@@ -653,6 +721,58 @@ class PhoneDiscoveryAndClient(
                     throw IllegalStateException(resp.optString("message", "Box từ chối gói tin"))
                 }
                 resp.optString("message", "Đã gửi tới ${box.name}")
+            }
+        }
+    }
+
+    suspend fun sendFileToBox(
+        box: DiscoveredBox,
+        pin: String,
+        fileName: String,
+        mimeType: String,
+        fileSize: Long,
+        inputStream: InputStream,
+        onProgress: (Float) -> Unit
+    ): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            Socket().use { socket ->
+                socket.tcpNoDelay = true
+                socket.connect(InetSocketAddress(box.host, box.port), 2500)
+                socket.soTimeout = 30_000
+                val out = BufferedOutputStream(socket.getOutputStream(), 32 * 1024)
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+
+                val header = (JSONObject().apply {
+                    put("type", "FILE_TRANSFER")
+                    put("pin", pin)
+                    put("fileName", fileName)
+                    put("mimeType", mimeType)
+                    put("fileSize", fileSize)
+                }.toString() + "\n").toByteArray(Charsets.UTF_8)
+                out.write(header)
+
+                val buf = ByteArray(32 * 1024)
+                var sent = 0L
+                var lastEmit = 0L
+                while (true) {
+                    val n = inputStream.read(buf)
+                    if (n <= 0) break
+                    out.write(buf, 0, n)
+                    sent += n
+                    val now = System.currentTimeMillis()
+                    if (now - lastEmit >= 100L || sent >= fileSize) {
+                        lastEmit = now
+                        onProgress(if (fileSize > 0L) (sent.toFloat() / fileSize.toFloat()).coerceIn(0f, 1f) else 0.5f)
+                    }
+                }
+                out.flush()
+
+                val respStr = reader.readLine() ?: throw IllegalStateException("Box không phản hồi sau khi nhận tệp")
+                val resp = JSONObject(respStr)
+                if (!resp.optBoolean("ok", false)) {
+                    throw IllegalStateException(resp.optString("message", "Box từ chối tệp"))
+                }
+                resp.optString("message", "Đã gửi tệp $fileName sang Box")
             }
         }
     }

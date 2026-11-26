@@ -110,10 +110,11 @@ class ShareReceiverActivity : ComponentActivity() {
             LaunchedEffect(fullInput) {
                 CarBridgeConnectionManager.probeNow()
                 val media = MediaLinkHelper.extractMediaLink(fullInput)
-                val resolved = if (media != null) {
-                    MediaLinkHelper.toParsedRecord(fullInput, media)
-                } else {
-                    MapLinkResolver.resolveAndParse(fullInput)
+                val web = if (media == null) MediaLinkHelper.extractGenericWebLink(fullInput) else null
+                val resolved = when {
+                    media != null -> MediaLinkHelper.toParsedRecord(fullInput, media)
+                    web != null -> MediaLinkHelper.toWebParsedRecord(fullInput, web)
+                    else -> MapLinkResolver.resolveAndParse(fullInput)
                 }
                 parsed = resolved
 
@@ -220,10 +221,10 @@ private fun ShareSheetDialog(
                 Icon(Icons.Default.DirectionsCar, contentDescription = null, tint = accents.emerald)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    if (parsed?.kind == com.carmap.bridge.model.LinkKind.MEDIA) {
-                        "Mở Media trên Android Box"
-                    } else {
-                        "Gửi bản đồ lên Android Box"
+                    when (parsed?.kind) {
+                        com.carmap.bridge.model.LinkKind.MEDIA -> "Mở Media trên Android Box"
+                        com.carmap.bridge.model.LinkKind.WEB -> "Mở trang web trên Android Box"
+                        else -> "Gửi bản đồ lên Android Box"
                     },
                     color = MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.titleMedium,
@@ -262,7 +263,9 @@ private fun ShareSheetDialog(
                 }
             }
 
-            if (parsed?.kind != com.carmap.bridge.model.LinkKind.MEDIA) {
+            if (parsed?.kind != com.carmap.bridge.model.LinkKind.MEDIA &&
+                parsed?.kind != com.carmap.bridge.model.LinkKind.WEB
+            ) {
                 Text("Mở trên Box bằng:", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),

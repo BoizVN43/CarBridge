@@ -12,6 +12,7 @@ import com.carmap.bridge.model.DeviceRole
 import com.carmap.bridge.model.DiscoveredBox
 import com.carmap.bridge.model.MapProvider
 import com.carmap.bridge.model.ParsedMapLink
+import com.carmap.bridge.model.ParkingPin
 import com.carmap.bridge.model.SavedPlace
 import com.carmap.bridge.model.SharedTransferRecord
 import com.carmap.bridge.model.ThemeMode
@@ -55,6 +56,9 @@ data class BridgeUiState(
     val savedPlaces: List<SavedPlace> = emptyList(),
     val clipboardHistory: List<String> = emptyList(),
     val lastReceivedClipboard: String? = null,
+    val parkingPin: ParkingPin? = null,
+    val fileTransferProgress: Float? = null,
+    val fileTransferLabel: String? = null,
     val pendingQueueTitle: String? = null,
     val lastPingSummary: String? = null,
     val lastStatusBanner: String? = null
@@ -319,6 +323,15 @@ object BridgeRepository {
     fun clearClipboardHistory() {
         _state.update { it.copy(clipboardHistory = emptyList(), lastReceivedClipboard = null) }
         persist()
+    }
+
+    fun setParkingPin(pin: ParkingPin?) {
+        _state.update { it.copy(parkingPin = pin) }
+        persist()
+    }
+
+    fun setFileTransferProgress(progress: Float?, label: String? = null) {
+        _state.update { it.copy(fileTransferProgress = progress, fileTransferLabel = label) }
     }
 
     fun recordTransfer(

@@ -36,6 +36,26 @@ object MediaLinkHelper {
         return DetectedMediaLink(url = url, serviceName = service, title = title)
     }
 
+    fun isKnownMapUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.contains("maps.google") ||
+            lower.contains("maps.app.goo.gl") ||
+            lower.contains("goo.gl/maps") ||
+            lower.contains("google.com/maps") ||
+            lower.contains("waze.com") ||
+            lower.contains("vietmap.vn") ||
+            lower.contains("maps.apple.com")
+    }
+
+    /**
+     * Detects any general http(s) web URL that is NOT a map URL or known media URL (for Browser Cast).
+     */
+    fun extractGenericWebLink(rawText: String): String? {
+        val url = urlRegex.find(rawText)?.value?.trimEnd('.', ',', ';', ')') ?: return null
+        if (isKnownMapUrl(url) || extractMediaLink(rawText) != null) return null
+        return url
+    }
+
     fun toParsedRecord(rawText: String, media: DetectedMediaLink): ParsedMapLink {
         return ParsedMapLink(
             rawInput = rawText,
@@ -47,20 +67,30 @@ object MediaLinkHelper {
         )
     }
 
+    fun toWebParsedRecord(rawText: String, url: String): ParsedMapLink {
+        val host = runCatching { java.net.URI(url).host?.removePrefix("www.") }.getOrNull().orEmpty()
+        val firstLine = rawText.lines()
+            .map { it.trim() }
+            .firstOrNull { it.isNotBlank() && !it.startsWith("http", ignoreCase = true) }
+            ?.take(60)
+        val title = firstLine ?: host.ifBlank { url.take(48) }
+        return ParsedMapLink(
+            rawInput = rawText,
+            extractedUrl = url,
+            resolvedUrl = url,
+            sourceProvider = MapProvider.UNKNOWN,
+            kind = LinkKind.WEB,
+            title = "Web: $title"
+        )
+    }
+
     fun isLikelyMapOrMediaLink(text: String): Boolean {
         val t = text.trim()
         if (t.isBlank() || t.length > 1200) return false
         if (extractMediaLink(t) != null) return true
+        if (extractGenericWebLink(t) != null) return true
         val lower = t.lowercase()
-        if (lower.contains("maps.google") ||
-            lower.contains("maps.app.goo.gl") ||
-            lower.contains("goo.gl/maps") ||
-            lower.contains("google.com/maps") ||
-            lower.contains("waze.com") ||
-            lower.contains("vietmap.vn") ||
-            lower.contains("maps.apple.com") ||
-            lower.startsWith("geo:")
-        ) {
+        if (isKnownMapUrl(lower) || lower.startsWith("geo:")) {
             return true
         }
         val coordRegex = Regex("""^\s*-?\d{1,2}\.\d{3,}\s*,\s*-?\d{1,3}\.\d{3,}\s*$""")

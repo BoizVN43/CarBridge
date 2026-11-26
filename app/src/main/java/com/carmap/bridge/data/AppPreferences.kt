@@ -7,6 +7,7 @@ import com.carmap.bridge.model.DiscoveredBox
 import com.carmap.bridge.model.LinkKind
 import com.carmap.bridge.model.MapProvider
 import com.carmap.bridge.model.ParsedMapLink
+import com.carmap.bridge.model.ParkingPin
 import com.carmap.bridge.model.SavedPlace
 import com.carmap.bridge.model.SharedTransferRecord
 import com.carmap.bridge.model.ThemeMode
@@ -49,6 +50,7 @@ object AppPreferences {
     private const val KEY_HISTORY_JSON = "transfer_history_json"
     private const val KEY_SAVED_PLACES_JSON = "saved_places_json"
     private const val KEY_CLIPBOARD_HISTORY_JSON = "clipboard_history_json"
+    private const val KEY_PARKING_PIN_JSON = "parking_pin_json"
     private const val KEY_PENDING_OUTBOX_JSON = "pending_outbox_json"
 
     private fun prefs(context: Context): SharedPreferences =
@@ -102,6 +104,7 @@ object AppPreferences {
         val history = parseHistoryJson(p.getString(KEY_HISTORY_JSON, null))
         val savedPlaces = parseSavedPlacesJson(p.getString(KEY_SAVED_PLACES_JSON, null))
         val clipboardHistory = parseClipboardHistoryJson(p.getString(KEY_CLIPBOARD_HISTORY_JSON, null))
+        val parkingPin = parseParkingPinJson(p.getString(KEY_PARKING_PIN_JSON, null))
         val pendingOutbox = loadPendingOutbox(context)
 
         return BridgeUiState(
@@ -120,6 +123,7 @@ object AppPreferences {
             history = history,
             savedPlaces = savedPlaces,
             clipboardHistory = clipboardHistory,
+            parkingPin = parkingPin,
             pendingQueueTitle = pendingOutbox?.title
         )
     }
@@ -151,6 +155,12 @@ object AppPreferences {
             putString(KEY_HISTORY_JSON, serializeHistory(state.history))
             putString(KEY_SAVED_PLACES_JSON, serializeSavedPlaces(state.savedPlaces))
             putString(KEY_CLIPBOARD_HISTORY_JSON, serializeClipboardHistory(state.clipboardHistory))
+            val pin = state.parkingPin
+            if (pin != null) {
+                putString(KEY_PARKING_PIN_JSON, serializeParkingPin(pin))
+            } else {
+                remove(KEY_PARKING_PIN_JSON)
+            }
             apply()
         }
     }
@@ -297,5 +307,25 @@ object AppPreferences {
                 }
             }
         }.getOrDefault(emptyList())
+    }
+
+    private fun serializeParkingPin(pin: ParkingPin): String = JSONObject().apply {
+        put("lat", pin.lat)
+        put("lng", pin.lng)
+        put("ts", pin.savedAtMs)
+        put("label", pin.label)
+    }.toString()
+
+    private fun parseParkingPinJson(raw: String?): ParkingPin? {
+        if (raw.isNullOrBlank()) return null
+        return runCatching {
+            val o = JSONObject(raw)
+            ParkingPin(
+                lat = o.getDouble("lat"),
+                lng = o.getDouble("lng"),
+                savedAtMs = o.optLong("ts", System.currentTimeMillis()),
+                label = o.optString("label", "Vị trí đỗ xe")
+            )
+        }.getOrNull()
     }
 }

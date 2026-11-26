@@ -8,6 +8,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import androidx.core.content.pm.PackageInfoCompat
+import com.carmap.bridge.util.CarBridgeNotifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -60,6 +61,7 @@ object AppUpdater {
     const val DEFAULT_OTA_REPO = "BoizVN43/CarBridge"
 
     private const val PREFS_OTA = "carbridge_ota_cache"
+    private const val KEY_NOTIFIED_VERSION = "notified_version_key"
     private const val KEY_AUTO_POPUP_SHOWN_VERSION = "auto_popup_shown_version_key"
     private const val KEY_CACHED_RELEASE_JSON = "cached_avail_release_json"
     private const val KEY_LAST_ETAG = "last_release_etag"
@@ -167,9 +169,18 @@ object AppUpdater {
     }
 
     private fun presentAutoDialogIfUnseen(context: Context, release: RemoteReleaseInfo, autoShowDialog: Boolean) {
-        if (!autoShowDialog) return
         val versionKey = "${release.versionCode ?: 0L}_${release.versionName}"
         val prefs = context.getSharedPreferences(PREFS_OTA, Context.MODE_PRIVATE)
+        val lastNotified = prefs.getString(KEY_NOTIFIED_VERSION, null)
+        if (lastNotified != versionKey) {
+            prefs.edit().putString(KEY_NOTIFIED_VERSION, versionKey).apply()
+            CarBridgeNotifier.notifyOtaUpdateAvailable(
+                context = context,
+                versionName = release.versionName,
+                sizeLabel = formatBytesMb(release.apkSizeBytes)
+            )
+        }
+        if (!autoShowDialog) return
         val lastAutoPopup = prefs.getString(KEY_AUTO_POPUP_SHOWN_VERSION, null)
         if (lastAutoPopup != versionKey && _state.value is OtaUpdateState.Idle) {
             prefs.edit().putString(KEY_AUTO_POPUP_SHOWN_VERSION, versionKey).apply()

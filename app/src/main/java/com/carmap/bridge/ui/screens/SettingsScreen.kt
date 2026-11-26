@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.Button
@@ -727,6 +728,18 @@ private fun BoxPermissionsAndAppsCard(
             trailingText = if (isBatteryIgnored) "Đã bật" else "Cấp quyền",
             trailingHighlight = isBatteryIgnored,
             onClick = onRequestBatteryOptimization
+        )
+        SettingsDivider()
+        val ctx = LocalContext.current
+        SettingsActionRow(
+            icon = Icons.Rounded.PowerSettingsNew,
+            tint = accents.cyan,
+            bg = accents.cyanContainer,
+            title = "Cài đặt tự chạy (Auto-Start ROM Box)",
+            subtitle = "Mở mục cho phép chạy ngầm trên ROM Android Box",
+            trailingText = "Mở",
+            trailingHighlight = false,
+            onClick = { com.carmap.bridge.util.OemAutoStartHelper.openAutoStartSettings(ctx) }
         )
         SettingsDivider()
         SettingsActionRow(

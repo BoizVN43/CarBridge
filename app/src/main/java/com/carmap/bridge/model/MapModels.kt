@@ -16,7 +16,9 @@ enum class DeviceRole(val title: String) {
 enum class BridgeAction {
     MAP,
     MEDIA_LINK,
+    WEB_LINK,
     CLIPBOARD,
+    PULL_CLIPBOARD,
     REMOTE_CONTROL,
     PING
 }
@@ -46,7 +48,9 @@ enum class LinkKind(val label: String) {
     COORDINATES("Tọa độ"),
     ROUTE("Lộ trình đã lập"),
     MEDIA("Video / Nhạc"),
+    WEB("Trang web"),
     CLIPBOARD("Clipboard"),
+    FILE("Tệp / APK"),
     UNKNOWN("Liên kết")
 }
 
@@ -101,6 +105,14 @@ data class SavedPlace(
     val id: String,
     val label: String,
     val rawLink: String
+)
+
+@Immutable
+data class ParkingPin(
+    val lat: Double,
+    val lng: Double,
+    val savedAtMs: Long,
+    val label: String = "Vị trí đỗ xe"
 )
 
 @Immutable

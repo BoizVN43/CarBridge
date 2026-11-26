@@ -24,6 +24,7 @@ import android.os.SystemClock
 import android.view.KeyEvent
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.core.content.FileProvider
 import com.carmap.bridge.MainActivity
 import com.carmap.bridge.NavigationDispatchActivity
 import com.carmap.bridge.R
@@ -40,6 +41,8 @@ import com.carmap.bridge.network.BoxServerTransport
 import com.carmap.bridge.network.IncomingMapPacket
 import com.carmap.bridge.parser.MapLinkResolver
 import com.carmap.bridge.parser.MediaLinkHelper
+import com.carmap.bridge.update.AppUpdater
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -78,6 +81,9 @@ class BoxReceiverService : Service() {
             onPacketReceived = { packet, remoteIp ->
                 val label = if (remoteIp == "127.0.0.1") "LAN Loopback (<10ms)" else "LAN Socket"
                 handleIncomingPacket(packet, remoteIp, label)
+            },
+            onFileReceived = { fileName, mimeType, file, pin, remoteIp ->
+                handleIncomingFile(fileName, mimeType, file, pin, remoteIp)
             }
         )
         lanTransport = lan
@@ -209,15 +215,35 @@ class BoxReceiverService : Service() {
                 return true to "Box: ${cmd.label}"
             }
 
+            BridgeAction.PULL_CLIPBOARD -> {
+                val clipText = withContext(Dispatchers.Main.immediate) {
+                    val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    cm?.primaryClip?.takeIf { it.itemCount > 0 }
+                        ?.getItemAt(0)?.coerceToText(this@BoxReceiverService)?.toString()?.trim()
+                }.orEmpty().ifBlank { state.lastReceivedClipboard.orEmpty() }
+                if (clipText.isBlank()) {
+                    return false to "Clipboard trên Box đang trống"
+                }
+                return true to clipText
+            }
+
+            BridgeAction.WEB_LINK -> {
+                return handleWebLink(packet, remoteEndpoint, transportUsed)
+            }
+
             BridgeAction.MEDIA_LINK -> {
                 return handleMediaLink(packet, remoteEndpoint, transportUsed)
             }
 
             else -> {
-                // Auto-detect media URLs even if sent under default MAP action
+                // Auto-detect media URLs or generic web URLs
                 val media = MediaLinkHelper.extractMediaLink(packet.rawText)
                 if (media != null) {
                     return handleMediaLink(packet, remoteEndpoint, transportUsed)
+                }
+                val webUrl = MediaLinkHelper.extractGenericWebLink(packet.rawText)
+                if (webUrl != null) {
+                    return handleWebLink(packet, remoteEndpoint, transportUsed)
                 }
             }
         }
@@ -306,6 +332,100 @@ class BoxReceiverService : Service() {
         )
         BridgeRepository.setStatusBanner("Box vừa mở $serviceName")
         return true to "Box đã mở $serviceName"
+    }
+
+    private suspend fun handleWebLink(
+        packet: IncomingMapPacket,
+        remoteEndpoint: String,
+        transportUsed: String
+    ): Pair<Boolean, String> {
+        val url = MediaLinkHelper.extractGenericWebLink(packet.rawText)
+            ?: packet.resolvedUrl.ifBlank { packet.rawText.trim() }
+        val parsed = MediaLinkHelper.toWebParsedRecord(packet.rawText, url)
+        acquireBriefWakeLock()
+        val opened = withContext(Dispatchers.Main.immediate) {
+            runCatching {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+                startActivity(intent)
+                true
+            }.getOrDefault(false)
+        }
+        BridgeRepository.recordTransfer(
+            direction = "NHẬN WEB",
+            peerName = "${packet.senderName} ($remoteEndpoint)",
+            parsed = parsed,
+            targetProvider = MapProvider.UNKNOWN,
+            intentUri = url,
+            transportUsed = transportUsed,
+            status = if (opened) "Đã mở trình duyệt trên Box" else "Đã nhận link web"
+        )
+        BridgeRepository.setStatusBanner("Box đã mở trang web: ${parsed.title}")
+        return true to "Box đã mở trang web"
+    }
+
+    private suspend fun handleIncomingFile(
+        fileName: String,
+        mimeType: String,
+        file: File,
+        pin: String,
+        remoteIp: String
+    ): Pair<Boolean, String> {
+        val state = BridgeRepository.state.value
+        if (state.pairingPin.isNotBlank() && pin != state.pairingPin) {
+            file.delete()
+            return false to "Sai mã PIN ghép nối"
+        }
+
+        val isApk = fileName.endsWith(".apk", ignoreCase = true) ||
+            mimeType.contains("android.package-archive", ignoreCase = true)
+        acquireBriefWakeLock()
+        val opened = withContext(Dispatchers.Main.immediate) {
+            if (isApk) {
+                Toast.makeText(this@BoxReceiverService, "CarBridge: Đã nhận APK $fileName", Toast.LENGTH_LONG).show()
+                AppUpdater.launchApkInstaller(this@BoxReceiverService, file)
+            } else {
+                runCatching {
+                    val uri = FileProvider.getUriForFile(
+                        this@BoxReceiverService,
+                        "${packageName}.fileprovider",
+                        file
+                    )
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, mimeType.ifBlank { "image/*" })
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(intent)
+                    Toast.makeText(this@BoxReceiverService, "CarBridge: Đã nhận tệp $fileName", Toast.LENGTH_SHORT).show()
+                    true
+                }.getOrDefault(false)
+            }
+        }
+
+        val parsed = ParsedMapLink(
+            rawInput = file.absolutePath,
+            extractedUrl = null,
+            resolvedUrl = file.absolutePath,
+            sourceProvider = MapProvider.UNKNOWN,
+            kind = LinkKind.FILE,
+            title = if (isApk) "APK: $fileName" else "Ảnh/Tệp: $fileName"
+        )
+        BridgeRepository.recordTransfer(
+            direction = "NHẬN TỆP",
+            peerName = remoteIp,
+            parsed = parsed,
+            targetProvider = MapProvider.UNKNOWN,
+            intentUri = file.absolutePath,
+            transportUsed = "LAN Siêu tốc",
+            status = if (isApk) {
+                if (opened) "Đang mở cài đặt APK" else "Đã nhận APK (cần cấp quyền cài nguồn lạ)"
+            } else {
+                if (opened) "Đã mở tệp trên Box" else "Đã lưu trên Box"
+            }
+        )
+        BridgeRepository.setStatusBanner("Box đã nhận tệp: $fileName")
+        return true to if (isApk) "Box đã nhận APK $fileName" else "Box đã nhận $fileName"
     }
 
     private fun dispatchMediaKey(audio: AudioManager, keyCode: Int) {

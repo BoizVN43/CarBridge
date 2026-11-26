@@ -32,7 +32,11 @@ import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DirectionsCar
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.LocalParking
 import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.QrCodeScanner
@@ -41,11 +45,13 @@ import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material.icons.rounded.WifiTethering
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -83,6 +89,9 @@ import com.carmap.bridge.ui.theme.CockpitAccents
 import com.carmap.bridge.ui.theme.LocalAdaptiveMetrics
 import com.carmap.bridge.ui.theme.LocalCockpitAccents
 import com.carmap.bridge.util.PairingCodeHelper
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun PhoneSenderScreen(
@@ -91,7 +100,12 @@ fun PhoneSenderScreen(
     onDismissClipboard: () -> Unit,
     onAcceptClipboardPairing: (String) -> Unit,
     onSendLink: (String, MapProvider) -> Unit,
+    onStartVoiceSearch: () -> Unit,
     onSendClipboardText: (String) -> Unit,
+    onPullClipboardFromBox: () -> Unit,
+    onPickFileToSend: () -> Unit,
+    onSaveParkingPin: () -> Unit,
+    onFindParkedCar: () -> Unit,
     onPingBox: () -> Unit,
     onClearPendingQueue: () -> Unit,
     onOpenSystemShareSheet: (String) -> Unit,
@@ -108,8 +122,12 @@ fun PhoneSenderScreen(
             null
         } else {
             val media = MediaLinkHelper.extractMediaLink(linkDraft)
-            if (media != null) MediaLinkHelper.toParsedRecord(linkDraft, media)
-            else MapLinkResolver.parseImmediate(linkDraft)
+            val web = if (media == null) MediaLinkHelper.extractGenericWebLink(linkDraft) else null
+            when {
+                media != null -> MediaLinkHelper.toParsedRecord(linkDraft, media)
+                web != null -> MediaLinkHelper.toWebParsedRecord(linkDraft, web)
+                else -> MapLinkResolver.parseImmediate(linkDraft)
+            }
         }
     }
     val activeBox = state.pairedBox
@@ -176,7 +194,16 @@ fun PhoneSenderScreen(
                         onSendClipboard = { text ->
                             onSendClipboardText(text)
                             if (text == clipDraft) clipDraft = ""
-                        }
+                        },
+                        onPullClipboard = onPullClipboardFromBox
+                    )
+                    CarToolsCard(
+                        state = state,
+                        accents = accents,
+                        adaptive = adaptive,
+                        onPickFileToSend = onPickFileToSend,
+                        onSaveParkingPin = onSaveParkingPin,
+                        onFindParkedCar = onFindParkedCar
                     )
                 }
                 Column(
@@ -202,6 +229,7 @@ fun PhoneSenderScreen(
                         adaptive = adaptive,
                         showActionButtons = true,
                         onLinkDraftChange = { linkDraft = it },
+                        onStartVoice = onStartVoiceSearch,
                         onSendLink = onSendLink,
                         onOpenSystemShareSheet = onOpenSystemShareSheet
                     )
@@ -266,6 +294,7 @@ fun PhoneSenderScreen(
                         adaptive = adaptive,
                         showActionButtons = true,
                         onLinkDraftChange = { linkDraft = it },
+                        onStartVoice = onStartVoiceSearch,
                         onSendLink = onSendLink,
                         onOpenSystemShareSheet = onOpenSystemShareSheet
                     )
@@ -280,7 +309,18 @@ fun PhoneSenderScreen(
                         onSendClipboard = { text ->
                             onSendClipboardText(text)
                             if (text == clipDraft) clipDraft = ""
-                        }
+                        },
+                        onPullClipboard = onPullClipboardFromBox
+                    )
+                }
+                item {
+                    CarToolsCard(
+                        state = state,
+                        accents = accents,
+                        adaptive = adaptive,
+                        onPickFileToSend = onPickFileToSend,
+                        onSaveParkingPin = onSaveParkingPin,
+                        onFindParkedCar = onFindParkedCar
                     )
                 }
                 if (state.history.isNotEmpty()) {
@@ -314,7 +354,7 @@ private fun SenderHeader(
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = "Điện thoại · Dẫn đường, Media & Clipboard Box",
+                text = "Điện thoại · Dẫn đường, Web, APK & Clipboard",
                 fontSize = adaptive.sp(11.5f),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -740,6 +780,7 @@ private fun DestinationComposeCard(
     adaptive: AdaptiveMetrics,
     showActionButtons: Boolean,
     onLinkDraftChange: (String) -> Unit,
+    onStartVoice: () -> Unit,
     onSendLink: (String, MapProvider) -> Unit,
     onOpenSystemShareSheet: (String) -> Unit
 ) {
@@ -752,13 +793,33 @@ private fun DestinationComposeCard(
             modifier = Modifier.padding(adaptive.cardPadding),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = "GỬI BẢN ĐỒ / YOUTUBE / NHẠC",
-                fontSize = adaptive.sp(10.5f),
-                fontWeight = FontWeight.Bold,
-                letterSpacing = adaptive.sp(0.7f),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "GỬI BẢN ĐỒ / MEDIA / TRANG WEB",
+                    fontSize = adaptive.sp(10.5f),
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = adaptive.sp(0.7f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                CockpitPill(
+                    onClick = onStartVoice,
+                    shape = RoundedCornerShape(999.dp),
+                    color = accents.emeraldContainer
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.Mic, contentDescription = "Giọng nói", tint = accents.emerald, modifier = Modifier.size(13.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text("Nói điểm đến", fontSize = adaptive.sp(10.5f), fontWeight = FontWeight.Bold, color = accents.emerald)
+                    }
+                }
+            }
 
             OutlinedTextField(
                 value = linkDraft,
@@ -798,6 +859,7 @@ private fun DestinationComposeCard(
                                 imageVector = when (liveParsed.kind) {
                                     LinkKind.ROUTE -> Icons.Rounded.Route
                                     LinkKind.MEDIA -> Icons.Rounded.MusicNote
+                                    LinkKind.WEB -> Icons.Rounded.Language
                                     else -> Icons.Rounded.LocationOn
                                 },
                                 contentDescription = null,
@@ -808,10 +870,10 @@ private fun DestinationComposeCard(
                         Spacer(Modifier.width(8.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = if (liveParsed.kind == LinkKind.MEDIA) {
-                                    "Media · Tự mở phát trên Box"
-                                } else {
-                                    "${liveParsed.sourceProvider.displayName} · ${liveParsed.kind.label}"
+                                text = when (liveParsed.kind) {
+                                    LinkKind.MEDIA -> "Media · Tự mở phát trên Box"
+                                    LinkKind.WEB -> "Browser Cast · Mở trang web trên Box"
+                                    else -> "${liveParsed.sourceProvider.displayName} · ${liveParsed.kind.label}"
                                 },
                                 fontSize = adaptive.sp(10.5f),
                                 fontWeight = FontWeight.Bold,
@@ -830,7 +892,7 @@ private fun DestinationComposeCard(
                 }
             }
 
-            if (liveParsed?.kind != LinkKind.MEDIA) {
+            if (liveParsed?.kind != LinkKind.MEDIA && liveParsed?.kind != LinkKind.WEB) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -883,7 +945,8 @@ private fun ClipboardBridgeCard(
     accents: CockpitAccents,
     adaptive: AdaptiveMetrics,
     onClipDraftChange: (String) -> Unit,
-    onSendClipboard: (String) -> Unit
+    onSendClipboard: (String) -> Unit,
+    onPullClipboard: () -> Unit
 ) {
     val context = LocalContext.current
     Surface(
@@ -901,20 +964,36 @@ private fun ClipboardBridgeCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "CLIPBOARD SANG BOX",
+                    text = "CLIPBOARD 2 CHIỀU (ĐT ↔ BOX)",
                     fontSize = adaptive.sp(10.5f),
                     fontWeight = FontWeight.Bold,
                     letterSpacing = adaptive.sp(0.7f),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (state.clipboardHistory.isNotEmpty()) {
-                    Text(
-                        text = "Xóa lịch sử",
-                        fontSize = adaptive.sp(11f),
-                        fontWeight = FontWeight.SemiBold,
-                        color = accents.coral,
-                        modifier = Modifier.clickable { BridgeRepository.clearClipboardHistory() }
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CockpitPill(
+                        onClick = onPullClipboard,
+                        shape = RoundedCornerShape(999.dp),
+                        color = accents.cyanContainer
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.Download, contentDescription = null, tint = accents.cyan, modifier = Modifier.size(12.dp))
+                            Spacer(Modifier.width(3.dp))
+                            Text("Lấy từ Box", fontSize = adaptive.sp(10.5f), fontWeight = FontWeight.Bold, color = accents.cyan)
+                        }
+                    }
+                    if (state.clipboardHistory.isNotEmpty()) {
+                        Text(
+                            text = "Xóa",
+                            fontSize = adaptive.sp(11f),
+                            fontWeight = FontWeight.SemiBold,
+                            color = accents.coral,
+                            modifier = Modifier.clickable { BridgeRepository.clearClipboardHistory() }
+                        )
+                    }
                 }
             }
 
@@ -1010,6 +1089,120 @@ private fun ClipboardBridgeCard(
 }
 
 @Composable
+private fun CarToolsCard(
+    state: BridgeUiState,
+    accents: CockpitAccents,
+    adaptive: AdaptiveMetrics,
+    onPickFileToSend: () -> Unit,
+    onSaveParkingPin: () -> Unit,
+    onFindParkedCar: () -> Unit
+) {
+    val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier.padding(adaptive.cardPadding),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "TIỆN ÍCH XE (APK / ẢNH & ĐỖ XE)",
+                fontSize = adaptive.sp(10.5f),
+                fontWeight = FontWeight.Bold,
+                letterSpacing = adaptive.sp(0.7f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CockpitPill(
+                    onClick = onPickFileToSend,
+                    shape = RoundedCornerShape(12.dp),
+                    color = accents.cyanContainer,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(adaptive.dp(42f))
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.UploadFile, contentDescription = null, tint = accents.cyan, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("Gửi APK / Ảnh", fontSize = adaptive.sp(12f), fontWeight = FontWeight.Bold, color = accents.cyan, maxLines = 1)
+                    }
+                }
+
+                CockpitPill(
+                    onClick = if (state.parkingPin != null) onFindParkedCar else onSaveParkingPin,
+                    shape = RoundedCornerShape(12.dp),
+                    color = accents.emeraldContainer,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(adaptive.dp(42f))
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.LocalParking, contentDescription = null, tint = accents.emerald, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            text = if (state.parkingPin != null) "Tìm xe (${timeFmt.format(Date(state.parkingPin.savedAtMs))})" else "Ghim chỗ đỗ",
+                            fontSize = adaptive.sp(12f),
+                            fontWeight = FontWeight.Bold,
+                            color = accents.emerald,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            if (state.parkingPin != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${state.parkingPin.label} · ${String.format("%.4f, %.4f", state.parkingPin.lat, state.parkingPin.lng)}",
+                        fontSize = adaptive.sp(11f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = "Cập nhật vị trí",
+                        fontSize = adaptive.sp(11f),
+                        fontWeight = FontWeight.Bold,
+                        color = accents.cyan,
+                        modifier = Modifier.clickable(onClick = onSaveParkingPin)
+                    )
+                }
+            }
+
+            if (state.fileTransferProgress != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = state.fileTransferLabel ?: "Đang truyền tệp sang Box...",
+                        fontSize = adaptive.sp(11.5f),
+                        fontWeight = FontWeight.SemiBold,
+                        color = accents.cyan
+                    )
+                    LinearProgressIndicator(
+                        progress = { state.fileTransferProgress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(999.dp)),
+                        color = accents.emerald
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun RecentHistoryCard(
     state: BridgeUiState,
     accents: CockpitAccents,
@@ -1059,9 +1252,13 @@ private fun RecentHistoryCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            imageVector = if (rec.parsed.kind == LinkKind.MEDIA) Icons.Rounded.MusicNote else Icons.Rounded.LocationOn,
+                            imageVector = when (rec.parsed.kind) {
+                                LinkKind.MEDIA -> Icons.Rounded.MusicNote
+                                LinkKind.WEB -> Icons.Rounded.Language
+                                else -> Icons.Rounded.LocationOn
+                            },
                             contentDescription = null,
-                            tint = if (rec.parsed.kind == LinkKind.MEDIA) accents.cyan else accents.emerald,
+                            tint = if (rec.parsed.kind == LinkKind.MEDIA || rec.parsed.kind == LinkKind.WEB) accents.cyan else accents.emerald,
                             modifier = Modifier.size(15.dp)
                         )
                         Spacer(Modifier.width(7.dp))
