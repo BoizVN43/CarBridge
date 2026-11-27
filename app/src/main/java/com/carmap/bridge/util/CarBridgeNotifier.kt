@@ -23,9 +23,11 @@ object CarBridgeNotifier {
 
     private const val CHANNEL_OTA = "carbridge_ota_updates"
     private const val CHANNEL_CONNECTION = "carbridge_box_connection"
+    private const val CHANNEL_ALERT = "carbridge_send_alerts"
 
     private const val NOTIF_ID_OTA = 5001
     private const val NOTIF_ID_CONNECTED = 5002
+    private const val NOTIF_ID_SEND_FAILED = 5003
 
     private fun ensureChannels(context: Context) {
         val mgr = context.getSystemService(NotificationManager::class.java) ?: return
@@ -43,8 +45,16 @@ object CarBridgeNotifier {
         ).apply {
             description = "Thông báo khi điện thoại kết nối với Android Box trên xe"
         }
+        val alertChannel = NotificationChannel(
+            CHANNEL_ALERT,
+            "Cảnh báo gửi sang Box",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Thông báo popup khi gửi bản đồ nhưng chưa kết nối được với Android Box"
+        }
         mgr.createNotificationChannel(otaChannel)
         mgr.createNotificationChannel(connChannel)
+        mgr.createNotificationChannel(alertChannel)
     }
 
     private fun canPostNotifications(context: Context): Boolean {
@@ -135,6 +145,45 @@ object CarBridgeNotifier {
             .build()
 
         runCatching { NotificationManagerCompat.from(context).notify(NOTIF_ID_CONNECTED, notif) }
+    }
+
+    fun notifyBoxNotConnected(
+        context: Context,
+        destinationTitle: String,
+        reason: String
+    ) {
+        if (!canPostNotifications(context)) return
+        ensureChannels(context)
+
+        val openIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val openPi = PendingIntent.getActivity(
+            context,
+            NOTIF_ID_SEND_FAILED,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val titleSafe = destinationTitle.ifBlank { "Địa điểm đã chọn" }
+        val message = "Không gửi được \"$titleSafe\". $reason"
+        val notif = NotificationCompat.Builder(context, CHANNEL_ALERT)
+            .setSmallIcon(R.drawable.ic_car_map)
+            .setContentTitle("Chưa kết nối được với Android Box")
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setAutoCancel(true)
+            .setContentIntent(openPi)
+            .build()
+
+        runCatching { NotificationManagerCompat.from(context).notify(NOTIF_ID_SEND_FAILED, notif) }
+    }
+
+    fun cancelSendFailedNotification(context: Context) {
+        runCatching { NotificationManagerCompat.from(context).cancel(NOTIF_ID_SEND_FAILED) }
     }
 
     fun cancelBoxConnectedNotification(context: Context) {

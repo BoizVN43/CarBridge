@@ -53,6 +53,11 @@ data class BridgeUiState(
     val lastKnownLanPort: Int = BoxNetworkConstants.TCP_PORT,
     val lastKnownBleAddress: String? = null,
     val lastAutoConnectNote: String? = null,
+    val rootDetected: Boolean = false,
+    val rootModeEnabled: Boolean = false,
+    val rootAutoSplitScreen: Boolean = true,
+    val rootSilentInstall: Boolean = true,
+    val rootAutoEnableRadios: Boolean = false,
     val autoOpenOnBox: Boolean = true,
     val simulatePreviewOnEmulator: Boolean = false,
     val boxPreferredTarget: MapProvider = MapProvider.AUTO,
@@ -155,6 +160,30 @@ object BridgeRepository {
 
     fun setAutoStartOnBoot(enabled: Boolean) {
         _state.update { it.copy(autoStartOnBoot = enabled) }
+        persistConfig()
+    }
+
+    fun setRootDetected(detected: Boolean) {
+        _state.update { it.copy(rootDetected = detected) }
+    }
+
+    fun setRootModeEnabled(enabled: Boolean) {
+        _state.update { it.copy(rootModeEnabled = enabled) }
+        persistConfig()
+    }
+
+    fun setRootAutoSplitScreen(enabled: Boolean) {
+        _state.update { it.copy(rootAutoSplitScreen = enabled) }
+        persistConfig()
+    }
+
+    fun setRootSilentInstall(enabled: Boolean) {
+        _state.update { it.copy(rootSilentInstall = enabled) }
+        persistConfig()
+    }
+
+    fun setRootAutoEnableRadios(enabled: Boolean) {
+        _state.update { it.copy(rootAutoEnableRadios = enabled) }
         persistConfig()
     }
 

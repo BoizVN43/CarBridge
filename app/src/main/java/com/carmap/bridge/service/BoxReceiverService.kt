@@ -46,6 +46,7 @@ import com.carmap.bridge.network.LanBroadcastHelper
 import com.carmap.bridge.parser.MapLinkResolver
 import com.carmap.bridge.parser.MediaLinkHelper
 import com.carmap.bridge.update.AppUpdater
+import com.carmap.bridge.util.RootHelper
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -128,6 +129,14 @@ class BoxReceiverService : Service() {
 
         serviceScope.launch(Dispatchers.IO) {
             BoxServerTransport.cleanupOldReceivedFiles(this@BoxReceiverService)
+            val hasRoot = RootHelper.checkRootAccess()
+            BridgeRepository.setRootDetected(hasRoot)
+            if (hasRoot && BridgeRepository.state.value.rootModeEnabled) {
+                RootHelper.applySystemPrivileges(packageName)
+                if (BridgeRepository.state.value.rootAutoEnableRadios) {
+                    RootHelper.ensureRadiosEnabled()
+                }
+            }
             lan.start()
             if (BridgeRepository.state.value.bleEnabled) {
                 ble.start()
@@ -318,6 +327,17 @@ class BoxReceiverService : Service() {
                 return handleMediaLink(packet, remoteEndpoint, transportUsed)
             }
 
+            BridgeAction.BOX_SYSTEM_CMD -> {
+                if (!state.rootModeEnabled || (!RootHelper.isRootGranted && !RootHelper.checkRootAccess())) {
+                    return false to "Cần bật Chế độ Root nâng cao trên Android Box"
+                }
+                val res = RootHelper.executeBoxSystemCommand(packet.rawText.trim())
+                if (res.first) {
+                    BridgeRepository.setStatusBanner("Root Box: ${res.second}")
+                }
+                return res
+            }
+
             else -> {
                 // Auto-detect media URLs or generic web URLs
                 val media = MediaLinkHelper.extractMediaLink(packet.rawText)
@@ -354,11 +374,23 @@ class BoxReceiverService : Service() {
         var openedReal = false
         if (state.autoOpenOnBox) {
             acquireBriefWakeLock()
-            withContext(Dispatchers.Main.immediate) {
-                if (!state.simulatePreviewOnEmulator && spec.isPackageInstalled) {
-                    openedReal = MapIntentLauncher.launchRealMapApp(this@BoxReceiverService, spec)
+            if (!state.simulatePreviewOnEmulator && spec.isPackageInstalled) {
+                if (state.rootModeEnabled && RootHelper.isRootGranted) {
+                    val (rootOk, _) = RootHelper.launchMapSmartRoot(
+                        context = this@BoxReceiverService,
+                        spec = spec,
+                        autoSplitEnabled = state.rootAutoSplitScreen
+                    )
+                    openedReal = rootOk
                 }
                 if (!openedReal) {
+                    withContext(Dispatchers.Main.immediate) {
+                        openedReal = MapIntentLauncher.launchRealMapApp(this@BoxReceiverService, spec)
+                    }
+                }
+            }
+            if (!openedReal) {
+                withContext(Dispatchers.Main.immediate) {
                     NavigationDispatchActivity.launch(
                         context = this@BoxReceiverService,
                         parsed = parsed,
@@ -479,25 +511,42 @@ class BoxReceiverService : Service() {
         val isApk = fileName.endsWith(".apk", ignoreCase = true) ||
             mimeType.contains("android.package-archive", ignoreCase = true)
         acquireBriefWakeLock()
-        val opened = withContext(Dispatchers.Main.immediate) {
-            if (isApk) {
-                Toast.makeText(this@BoxReceiverService, "CarBridge: Đã nhận APK $fileName", Toast.LENGTH_LONG).show()
-                AppUpdater.launchApkInstaller(this@BoxReceiverService, file)
-            } else {
-                runCatching {
-                    val uri = FileProvider.getUriForFile(
-                        this@BoxReceiverService,
-                        "${packageName}.fileprovider",
-                        file
-                    )
-                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, mimeType.ifBlank { "image/*" })
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    startActivity(intent)
-                    Toast.makeText(this@BoxReceiverService, "CarBridge: Đã nhận tệp $fileName", Toast.LENGTH_SHORT).show()
-                    true
-                }.getOrDefault(false)
+        val silentInstalled = if (isApk &&
+            state.rootModeEnabled &&
+            state.rootSilentInstall &&
+            RootHelper.isRootGranted
+        ) {
+            val (ok, _) = RootHelper.silentInstallApk(file)
+            ok
+        } else {
+            false
+        }
+        val opened = if (silentInstalled) {
+            withContext(Dispatchers.Main.immediate) {
+                Toast.makeText(this@BoxReceiverService, "CarBridge Root: Đã cài ngầm $fileName", Toast.LENGTH_LONG).show()
+            }
+            true
+        } else {
+            withContext(Dispatchers.Main.immediate) {
+                if (isApk) {
+                    Toast.makeText(this@BoxReceiverService, "CarBridge: Đã nhận APK $fileName", Toast.LENGTH_LONG).show()
+                    AppUpdater.launchApkInstaller(this@BoxReceiverService, file)
+                } else {
+                    runCatching {
+                        val uri = FileProvider.getUriForFile(
+                            this@BoxReceiverService,
+                            "${packageName}.fileprovider",
+                            file
+                        )
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, mimeType.ifBlank { "image/*" })
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        startActivity(intent)
+                        Toast.makeText(this@BoxReceiverService, "CarBridge: Đã nhận tệp $fileName", Toast.LENGTH_SHORT).show()
+                        true
+                    }.getOrDefault(false)
+                }
             }
         }
 
@@ -517,7 +566,11 @@ class BoxReceiverService : Service() {
             intentUri = file.absolutePath,
             transportUsed = "LAN Siêu tốc",
             status = if (isApk) {
-                if (opened) "Đang mở cài đặt APK" else "Đã nhận APK (cần cấp quyền cài nguồn lạ)"
+                when {
+                    silentInstalled -> "Đã cài đặt APK im lặng qua Root"
+                    opened -> "Đang mở cài đặt APK"
+                    else -> "Đã nhận APK (cần cấp quyền cài nguồn lạ)"
+                }
             } else {
                 if (opened) "Đã mở tệp trên Box" else "Đã lưu trên Box"
             }

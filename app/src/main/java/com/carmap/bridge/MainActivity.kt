@@ -30,8 +30,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.DirectionsCar
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -72,6 +75,7 @@ import com.carmap.bridge.ui.theme.CarMapTheme
 import com.carmap.bridge.update.AppUpdater
 import com.carmap.bridge.util.CarBridgeNotifier
 import com.carmap.bridge.util.PairingCodeHelper
+import com.carmap.bridge.util.RootHelper
 import com.carmap.bridge.widget.CarBridgeWidgetProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -119,12 +123,17 @@ class MainActivity : ComponentActivity() {
             lifecycleScope.launch {
                 val state = BridgeRepository.state.value
                 BridgeRepository.setStatusBanner("Giọng nói: \"$spoken\" — đang gửi lên Box...")
-                CarBridgeConnectionManager.sendOrQueue(
+                val res = CarBridgeConnectionManager.sendOrQueue(
                     context = this@MainActivity,
                     primaryBox = state.pairedBox ?: state.discoveredBoxes.firstOrNull(),
                     rawText = spoken,
-                    preferredTarget = state.phoneTargetOverride
+                    preferredTarget = MapProvider.AUTO
                 )
+                res.onFailure { err ->
+                    val msg = err.message ?: "Chưa kết nối được với Android Box"
+                    BridgeRepository.setStatusBanner(msg)
+                    CarBridgeNotifier.notifyBoxNotConnected(this@MainActivity, spoken, msg)
+                }
             }
         }
     }
@@ -210,12 +219,17 @@ class MainActivity : ComponentActivity() {
             intent.removeExtra(CarBridgeWidgetProvider.EXTRA_SEND_SAVED_LINK)
             lifecycleScope.launch {
                 val st = BridgeRepository.state.value
-                CarBridgeConnectionManager.sendOrQueue(
+                val res = CarBridgeConnectionManager.sendOrQueue(
                     context = this@MainActivity,
                     primaryBox = st.pairedBox ?: st.discoveredBoxes.firstOrNull(),
                     rawText = savedLink,
-                    preferredTarget = st.phoneTargetOverride
+                    preferredTarget = MapProvider.AUTO
                 )
+                res.onFailure { err ->
+                    val msg = err.message ?: "Chưa kết nối được với Android Box"
+                    BridgeRepository.setStatusBanner(msg)
+                    CarBridgeNotifier.notifyBoxNotConnected(this@MainActivity, "Địa điểm đã ghim", msg)
+                }
             }
         }
     }
@@ -256,6 +270,7 @@ class MainActivity : ComponentActivity() {
             val scope = rememberCoroutineScope()
             val lifecycleOwner = LocalLifecycleOwner.current
             var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+            var sendFailedPopupMessage by remember { mutableStateOf<String?>(null) }
             var canDrawOverlays by remember { mutableStateOf(Settings.canDrawOverlays(this)) }
             var isBatteryIgnored by remember {
                 mutableStateOf(
@@ -290,8 +305,12 @@ class MainActivity : ComponentActivity() {
             }
 
             LaunchedEffect(state.roleConfigured, state.role) {
-                if (state.roleConfigured && state.role == DeviceRole.CAR_BOX_RECEIVER && !state.boxServiceRunning) {
-                    BoxReceiverService.start(this@MainActivity)
+                if (state.roleConfigured && state.role == DeviceRole.CAR_BOX_RECEIVER) {
+                    if (!state.boxServiceRunning) {
+                        BoxReceiverService.start(this@MainActivity)
+                    }
+                    val hasRoot = RootHelper.checkRootAccess()
+                    BridgeRepository.setRootDetected(hasRoot)
                 }
             }
 
@@ -415,8 +434,15 @@ class MainActivity : ComponentActivity() {
                                                         rawText = rawText,
                                                         preferredTarget = target
                                                     )
-                                                    res.onFailure {
-                                                        BridgeRepository.setStatusBanner(it.message ?: "Gửi thất bại")
+                                                    res.onFailure { err ->
+                                                        val errMsg = err.message ?: "Chưa kết nối được với Android Box"
+                                                        BridgeRepository.setStatusBanner(errMsg)
+                                                        sendFailedPopupMessage = errMsg
+                                                        CarBridgeNotifier.notifyBoxNotConnected(
+                                                            context = this@MainActivity,
+                                                            destinationTitle = rawText.lines().firstOrNull().orEmpty().take(48),
+                                                            reason = errMsg
+                                                        )
                                                     }
                                                 }
                                             },
@@ -467,6 +493,17 @@ class MainActivity : ComponentActivity() {
                                                             )
                                                         )
                                                     }
+                                                }
+                                            },
+                                            onSendBoxCommand = { cmd, label ->
+                                                scope.launch {
+                                                    val res = CarBridgeConnectionManager.sendBoxSystemCommand(
+                                                        context = this@MainActivity,
+                                                        cmd = cmd,
+                                                        label = label
+                                                    )
+                                                    val msg = res.getOrElse { it.message ?: "$label thất bại" }
+                                                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
                                                 }
                                             },
                                             onPingBox = {
@@ -659,6 +696,31 @@ class MainActivity : ComponentActivity() {
                             state = otaState,
                             onDismiss = { AppUpdater.dismissDialog() }
                         )
+
+                        sendFailedPopupMessage?.let { errText ->
+                            AlertDialog(
+                                onDismissRequest = { sendFailedPopupMessage = null },
+                                title = { Text("Chưa kết nối được với Android Box") },
+                                text = {
+                                    Text("$errText\n\nHãy đảm bảo CarBridge đang bật trên Android Box và 2 máy cùng Wi-Fi hoặc bật Bluetooth.")
+                                },
+                                confirmButton = {
+                                    TextButton(onClick = { sendFailedPopupMessage = null }) {
+                                        Text("Đã hiểu")
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(
+                                        onClick = {
+                                            sendFailedPopupMessage = null
+                                            selectedTab = 1
+                                        }
+                                    ) {
+                                        Text("Mở Cài đặt")
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
             }

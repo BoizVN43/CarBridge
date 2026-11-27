@@ -53,6 +53,10 @@ object AppPreferences {
     private const val KEY_LAST_BLE_ADDR = "last_known_ble_addr"
     private const val KEY_LAST_AUTO_CONNECT_NOTE = "last_auto_connect_note"
     private const val KEY_AUTO_OPEN = "auto_open"
+    private const val KEY_ROOT_MODE_ENABLED = "root_mode_enabled"
+    private const val KEY_ROOT_AUTO_SPLIT = "root_auto_split_screen"
+    private const val KEY_ROOT_SILENT_INSTALL = "root_silent_install"
+    private const val KEY_ROOT_AUTO_RADIOS = "root_auto_enable_radios"
     private const val KEY_SIMULATE_PREVIEW = "simulate_preview_v2"
     private const val KEY_BOX_TARGET = "box_preferred_target"
     private const val KEY_PHONE_TARGET = "phone_target_override"
@@ -192,6 +196,10 @@ object AppPreferences {
             bleEnabled = p.getBoolean(KEY_BLE_ENABLED, true),
             preferBleOverLan = p.getBoolean(KEY_PREFER_BLE, false),
             proximityOnly2m = p.getBoolean(KEY_PROXIMITY_ONLY_2M, false),
+            rootModeEnabled = p.getBoolean(KEY_ROOT_MODE_ENABLED, false),
+            rootAutoSplitScreen = p.getBoolean(KEY_ROOT_AUTO_SPLIT, true),
+            rootSilentInstall = p.getBoolean(KEY_ROOT_SILENT_INSTALL, true),
+            rootAutoEnableRadios = p.getBoolean(KEY_ROOT_AUTO_RADIOS, false),
             autoOpenOnBox = p.getBoolean(KEY_AUTO_OPEN, true),
             simulatePreviewOnEmulator = p.getBoolean(KEY_SIMULATE_PREVIEW, false),
             boxPreferredTarget = boxTarget,
@@ -243,6 +251,10 @@ object AppPreferences {
                 putString(KEY_LAST_BLE_ADDR, state.lastKnownBleAddress)
             }
             putBoolean(KEY_AUTO_OPEN, state.autoOpenOnBox)
+            putBoolean(KEY_ROOT_MODE_ENABLED, state.rootModeEnabled)
+            putBoolean(KEY_ROOT_AUTO_SPLIT, state.rootAutoSplitScreen)
+            putBoolean(KEY_ROOT_SILENT_INSTALL, state.rootSilentInstall)
+            putBoolean(KEY_ROOT_AUTO_RADIOS, state.rootAutoEnableRadios)
             putBoolean(KEY_SIMULATE_PREVIEW, state.simulatePreviewOnEmulator)
             putString(KEY_BOX_TARGET, state.boxPreferredTarget.name)
             putString(KEY_PHONE_TARGET, state.phoneTargetOverride.name)

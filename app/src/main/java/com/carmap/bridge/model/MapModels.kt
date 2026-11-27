@@ -19,7 +19,8 @@ enum class BridgeAction {
     WEB_LINK,
     CLIPBOARD,
     PULL_CLIPBOARD,
-    PING
+    PING,
+    BOX_SYSTEM_CMD
 }
 
 enum class MapProvider(

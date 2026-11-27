@@ -45,9 +45,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.widget.Toast
+import com.carmap.bridge.data.BridgeRepository
+import com.carmap.bridge.model.DeviceRole
 import com.carmap.bridge.ui.theme.LocalCockpitAccents
 import com.carmap.bridge.update.AppUpdater
 import com.carmap.bridge.update.OtaUpdateState
+import com.carmap.bridge.util.RootHelper
 import kotlinx.coroutines.launch
 
 @Composable
@@ -299,8 +303,22 @@ fun AppUpdateDialog(
                             scope.launch {
                                 val file = AppUpdater.downloadUpdate(context, state.release)
                                 if (file != null) {
-                                    val launched = AppUpdater.launchApkInstaller(context, file)
-                                    if (!launched) permissionNotice = true
+                                    val st = BridgeRepository.state.value
+                                    val silentOk = if (st.role == DeviceRole.CAR_BOX_RECEIVER &&
+                                        st.rootModeEnabled &&
+                                        st.rootSilentInstall &&
+                                        RootHelper.isRootGranted
+                                    ) {
+                                        Toast.makeText(context, "Đang cài đè im lặng qua Root...", Toast.LENGTH_SHORT).show()
+                                        val (ok, _) = RootHelper.silentInstallApk(file)
+                                        ok
+                                    } else {
+                                        false
+                                    }
+                                    if (!silentOk) {
+                                        val launched = AppUpdater.launchApkInstaller(context, file)
+                                        if (!launched) permissionNotice = true
+                                    }
                                 }
                             }
                         },
@@ -317,8 +335,24 @@ fun AppUpdateDialog(
                 is OtaUpdateState.ReadyToInstall -> {
                     Button(
                         onClick = {
-                            val launched = AppUpdater.launchApkInstaller(context, state.apkFile)
-                            if (!launched) permissionNotice = true
+                            scope.launch {
+                                val st = BridgeRepository.state.value
+                                val silentOk = if (st.role == DeviceRole.CAR_BOX_RECEIVER &&
+                                    st.rootModeEnabled &&
+                                    st.rootSilentInstall &&
+                                    RootHelper.isRootGranted
+                                ) {
+                                    Toast.makeText(context, "Đang cài đè im lặng qua Root...", Toast.LENGTH_SHORT).show()
+                                    val (ok, _) = RootHelper.silentInstallApk(state.apkFile)
+                                    ok
+                                } else {
+                                    false
+                                }
+                                if (!silentOk) {
+                                    val launched = AppUpdater.launchApkInstaller(context, state.apkFile)
+                                    if (!launched) permissionNotice = true
+                                }
+                            }
                         },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = accents.emerald,

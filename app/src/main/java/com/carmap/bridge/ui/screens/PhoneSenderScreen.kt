@@ -106,6 +106,7 @@ fun PhoneSenderScreen(
     onPickFileToSend: () -> Unit,
     onSaveParkingPin: () -> Unit,
     onFindParkedCar: () -> Unit,
+    onSendBoxCommand: (cmd: String, label: String) -> Unit,
     onPingBox: () -> Unit,
     onClearPendingQueue: () -> Unit,
     onOpenSettings: () -> Unit
@@ -179,7 +180,7 @@ fun PhoneSenderScreen(
                                     if (PairingCodeHelper.parsePairingUri(clipboardSuggestion) != null) {
                                         onAcceptClipboardPairing(clipboardSuggestion)
                                     } else {
-                                        onSendLink(clipboardSuggestion, state.phoneTargetOverride)
+                                        onSendLink(clipboardSuggestion, MapProvider.AUTO)
                                     }
                                     onDismissClipboard()
                                 },
@@ -208,7 +209,8 @@ fun PhoneSenderScreen(
                             adaptive = adaptive,
                             onPickFileToSend = onPickFileToSend,
                             onSaveParkingPin = onSaveParkingPin,
-                            onFindParkedCar = onFindParkedCar
+                            onFindParkedCar = onFindParkedCar,
+                            onSendBoxCommand = onSendBoxCommand
                         )
                     }
                     Column(
@@ -222,7 +224,7 @@ fun PhoneSenderScreen(
                             state = state,
                             accents = accents,
                             adaptive = adaptive,
-                            onSendPlace = { onSendLink(it, state.phoneTargetOverride) },
+                            onSendPlace = { onSendLink(it, MapProvider.AUTO) },
                             onRemovePlace = { BridgeRepository.removeSavedPlace(it) },
                             onAddClick = { showAddPlaceDialog = true }
                         )
@@ -266,7 +268,7 @@ fun PhoneSenderScreen(
                                 if (PairingCodeHelper.parsePairingUri(clipboardSuggestion) != null) {
                                     onAcceptClipboardPairing(clipboardSuggestion)
                                 } else {
-                                    onSendLink(clipboardSuggestion, state.phoneTargetOverride)
+                                    onSendLink(clipboardSuggestion, MapProvider.AUTO)
                                 }
                                 onDismissClipboard()
                             },
@@ -285,7 +287,7 @@ fun PhoneSenderScreen(
                         state = state,
                         accents = accents,
                         adaptive = adaptive,
-                        onSendPlace = { onSendLink(it, state.phoneTargetOverride) },
+                        onSendPlace = { onSendLink(it, MapProvider.AUTO) },
                         onRemovePlace = { BridgeRepository.removeSavedPlace(it) },
                         onAddClick = { showAddPlaceDialog = true }
                     )
@@ -324,7 +326,8 @@ fun PhoneSenderScreen(
                         adaptive = adaptive,
                         onPickFileToSend = onPickFileToSend,
                         onSaveParkingPin = onSaveParkingPin,
-                        onFindParkedCar = onFindParkedCar
+                        onFindParkedCar = onFindParkedCar,
+                        onSendBoxCommand = onSendBoxCommand
                     )
                 }
                 if (state.history.isNotEmpty()) {
@@ -887,40 +890,6 @@ private fun DestinationComposeCard(
                 }
             }
 
-            if (liveParsed?.kind != LinkKind.MEDIA && liveParsed?.kind != LinkKind.WEB) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Mở bằng:",
-                        fontSize = adaptive.sp(11f),
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(end = 2.dp)
-                    )
-                    listOf(MapProvider.AUTO, MapProvider.GOOGLE_MAPS, MapProvider.WAZE, MapProvider.VIETMAP).forEach { target ->
-                        val selected = state.phoneTargetOverride == target
-                        CockpitPill(
-                            onClick = { BridgeRepository.updateSettings(phoneTargetOverride = target) },
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (selected) accents.emeraldContainer else MaterialTheme.colorScheme.surfaceVariant
-                        ) {
-                            Text(
-                                text = target.displayName,
-                                fontSize = adaptive.sp(11f),
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                color = if (selected) accents.emerald else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
             if (showActionButtons) {
                 SenderActionButtons(
                     adaptive = adaptive,
@@ -935,7 +904,7 @@ private fun DestinationComposeCard(
                             Toast.makeText(context, "Clipboard đang trống", Toast.LENGTH_SHORT).show()
                         }
                     },
-                    onSend = { onSendLink(linkDraft, state.phoneTargetOverride) }
+                    onSend = { onSendLink(linkDraft, MapProvider.AUTO) }
                 )
             }
         }
@@ -1099,9 +1068,32 @@ private fun CarToolsCard(
     adaptive: AdaptiveMetrics,
     onPickFileToSend: () -> Unit,
     onSaveParkingPin: () -> Unit,
-    onFindParkedCar: () -> Unit
+    onFindParkedCar: () -> Unit,
+    onSendBoxCommand: (cmd: String, label: String) -> Unit
 ) {
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    var confirmReboot by remember { mutableStateOf(false) }
+
+    if (confirmReboot) {
+        AlertDialog(
+            onDismissRequest = { confirmReboot = false },
+            title = { Text("Khởi động lại Android Box?") },
+            text = { Text("Box sẽ khởi động lại ngay (yêu cầu đã bật Chế độ Root nâng cao trên Box).") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmReboot = false
+                        onSendBoxCommand("REBOOT", "Khởi động lại Box")
+                    }
+                ) {
+                    Text("Khởi động lại", color = accents.coral, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmReboot = false }) { Text("Hủy") }
+            }
+        )
+    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
@@ -1200,6 +1192,45 @@ private fun CarToolsCard(
                             .clip(RoundedCornerShape(999.dp)),
                         color = accents.emerald
                     )
+                }
+            }
+
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "ĐIỀU KHIỂN BOX TỪ XA (ROOT)",
+                fontSize = adaptive.sp(9.5f),
+                fontWeight = FontWeight.Bold,
+                letterSpacing = adaptive.sp(0.6f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(
+                    Triple("KEY_HOME", "Home", accents.cyanContainer to accents.cyan),
+                    Triple("FORCE_STOP_MAPS", "Dọn Maps", accents.amberContainer to accents.amber),
+                    Triple("REBOOT", "Reboot Box", accents.coralContainer to accents.coral)
+                ).forEach { (cmd, label, colors) ->
+                    CockpitPill(
+                        onClick = {
+                            if (cmd == "REBOOT") confirmReboot = true
+                            else onSendBoxCommand(cmd, label)
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        color = colors.first,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(adaptive.dp(34f))
+                    ) {
+                        Text(
+                            text = label,
+                            fontSize = adaptive.sp(11f),
+                            fontWeight = FontWeight.Bold,
+                            color = colors.second,
+                            maxLines = 1
+                        )
+                    }
                 }
             }
         }

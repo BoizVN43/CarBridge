@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.QrCode2
+import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -46,6 +48,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,6 +80,8 @@ import com.carmap.bridge.ui.theme.LocalAdaptiveMetrics
 import com.carmap.bridge.ui.theme.LocalCockpitAccents
 import com.carmap.bridge.update.AppUpdater
 import com.carmap.bridge.update.RemoteReleaseInfo
+import com.carmap.bridge.util.RootHelper
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
@@ -182,6 +187,7 @@ fun SettingsScreen(
                             AppearanceCard(state, adaptive)
                         } else {
                             AutoLaunchSettingsCard(state, accents, adaptive, onToggleBoxService, onToggleAutoStartOnBoot)
+                            RootSettingsCard(state, accents, adaptive)
                             BoxPermissionsAndAppsCard(
                                 canDrawOverlays = canDrawOverlays,
                                 hasNotificationPerm = hasNotificationPerm,
@@ -252,6 +258,7 @@ fun SettingsScreen(
                 } else {
                     item { BoxIdentitySettingsCard(state, adaptive, onToggleBle) }
                     item { AutoLaunchSettingsCard(state, accents, adaptive, onToggleBoxService, onToggleAutoStartOnBoot) }
+                    item { RootSettingsCard(state, accents, adaptive) }
                     item {
                         BoxPermissionsAndAppsCard(
                             canDrawOverlays = canDrawOverlays,
@@ -830,6 +837,99 @@ private fun BoxPermissionsAndAppsCard(
             trailingHighlight = bleStatus.permissionsGranted && bleStatus.hardwareSupported,
             onClick = onRequestBlePermissions
         )
+    }
+}
+
+@Composable
+private fun RootSettingsCard(
+    state: BridgeUiState,
+    accents: CockpitAccents,
+    adaptive: AdaptiveMetrics
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    SettingsGroupCard(title = "CHẾ ĐỘ ROOT NÂNG CAO (SU / MAGISK)") {
+        SettingsActionRow(
+            icon = Icons.Rounded.Security,
+            tint = if (state.rootDetected) accents.emerald else accents.amber,
+            bg = if (state.rootDetected) accents.emeraldContainer else accents.amberContainer,
+            title = if (state.rootDetected) "Đã phát hiện quyền Root (su)" else "Kiểm tra quyền Root trên Box",
+            subtitle = if (state.rootDetected) {
+                "Có thể ép mở bản đồ, giữ/tự chia đôi màn hình, cài ngầm APK/OTA"
+            } else {
+                "Chỉ dành cho Android Box đã Root (Magisk / SuperSU)"
+            },
+            trailingText = if (state.rootDetected) "Cấp quyền" else "Kiểm tra",
+            trailingHighlight = state.rootDetected,
+            onClick = {
+                scope.launch {
+                    val granted = RootHelper.checkRootAccess()
+                    BridgeRepository.setRootDetected(granted)
+                    if (granted) {
+                        val (_, msg) = RootHelper.applySystemPrivileges(context.packageName)
+                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Chưa thấy hoặc bị từ chối quyền Root (su)", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        )
+        SettingsDivider()
+        SettingsToggleRow(
+            title = "Bật Chế độ Root nâng cao",
+            subtitle = "Tự cấp quyền nền, Overlay, Clipboard nền và mở app qua su",
+            checked = state.rootModeEnabled,
+            adaptive = adaptive,
+            onCheckedChange = { enable ->
+                if (enable) {
+                    scope.launch {
+                        val granted = RootHelper.checkRootAccess()
+                        BridgeRepository.setRootDetected(granted)
+                        if (granted) {
+                            BridgeRepository.setRootModeEnabled(true)
+                            val (_, msg) = RootHelper.applySystemPrivileges(context.packageName)
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        } else {
+                            BridgeRepository.setRootModeEnabled(false)
+                            Toast.makeText(context, "Box chưa cấp quyền su cho CarBridge", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } else {
+                    BridgeRepository.setRootModeEnabled(false)
+                }
+            }
+        )
+        if (state.rootModeEnabled) {
+            SettingsDivider()
+            SettingsToggleRow(
+                title = "Giữ / Tự chia đôi màn hình (Split-Screen)",
+                subtitle = "Giữ nguyên chia đôi sẵn có; thử tự chia đôi khi đang mở app nhạc/video",
+                checked = state.rootAutoSplitScreen,
+                adaptive = adaptive,
+                onCheckedChange = { BridgeRepository.setRootAutoSplitScreen(it) }
+            )
+            SettingsDivider()
+            SettingsToggleRow(
+                title = "Cài đặt APK & OTA im lặng",
+                subtitle = "Tự cài đè file APK gửi từ điện thoại và bản cập nhật mới không cần bấm tay",
+                checked = state.rootSilentInstall,
+                adaptive = adaptive,
+                onCheckedChange = { BridgeRepository.setRootSilentInstall(it) }
+            )
+            SettingsDivider()
+            SettingsToggleRow(
+                title = "Tự bật Wi-Fi & Bluetooth khi nổ máy",
+                subtitle = "Tự bật lại Wi-Fi/BT nếu ROM Box tắt sau khi ngủ ACC",
+                checked = state.rootAutoEnableRadios,
+                adaptive = adaptive,
+                onCheckedChange = { enable ->
+                    BridgeRepository.setRootAutoEnableRadios(enable)
+                    if (enable) {
+                        scope.launch { RootHelper.ensureRadiosEnabled() }
+                    }
+                }
+            )
+        }
     }
 }
 

@@ -27,6 +27,7 @@ import com.carmap.bridge.launcher.MapIntentLauncher
 import com.carmap.bridge.model.BridgeAction
 import com.carmap.bridge.model.DeviceRole
 import com.carmap.bridge.model.DiscoveredBox
+import com.carmap.bridge.model.LinkKind
 import com.carmap.bridge.model.MapProvider
 import com.carmap.bridge.model.ParsedMapLink
 import com.carmap.bridge.model.ParkingPin
@@ -406,6 +407,41 @@ object CarBridgeConnectionManager {
         return res
     }
 
+    suspend fun sendBoxSystemCommand(context: Context, cmd: String, label: String): Result<String> {
+        init(context)
+        val state = BridgeRepository.state.value
+        val box = state.pairedBox ?: state.discoveredBoxes.firstOrNull() ?: run {
+            state.lastKnownLanHost?.let { host ->
+                DiscoveredBox("saved-$host", state.boxName, host, state.lastKnownLanPort, TransportChannel.LAN, state.lastKnownBleAddress)
+            } ?: state.lastKnownBleAddress?.let { addr ->
+                DiscoveredBox("ble-$addr", state.boxName, addr, 0, TransportChannel.BLE, addr)
+            }
+        } ?: return Result.failure(IllegalStateException("Chưa thấy Android Box"))
+
+        val res = client?.sendHybridToBox(
+            primaryBox = box,
+            discoveredBoxes = state.discoveredBoxes,
+            preferBle = state.preferBleOverLan,
+            pin = state.pairingPin,
+            senderName = Build.MODEL ?: "Phone",
+            rawText = cmd,
+            preferredTarget = MapProvider.AUTO,
+            action = BridgeAction.BOX_SYSTEM_CMD,
+            fallbackLanHost = state.lastKnownLanHost,
+            fallbackLanPort = state.lastKnownLanPort,
+            fallbackBleAddress = state.lastKnownBleAddress,
+            onWorkingBoxResolved = { BridgeRepository.selectPairedBox(context, it) }
+        ) ?: Result.failure(IllegalStateException("Chưa khởi tạo kết nối"))
+
+        res.onSuccess {
+            onBoxSeenOnline(context, box)
+            BridgeRepository.setStatusBanner(it)
+        }.onFailure {
+            BridgeRepository.setStatusBanner("$label thất bại: ${it.message}")
+        }
+        return res
+    }
+
     suspend fun sendFileUriToBox(context: Context, uri: Uri): Result<String> = withContext(Dispatchers.IO) {
         init(context)
         val state = BridgeRepository.state.value
@@ -459,12 +495,36 @@ object CarBridgeConnectionManager {
         res
     }
 
+    fun enqueuePendingManual(
+        context: Context,
+        rawText: String,
+        parsed: ParsedMapLink,
+        preferredTarget: MapProvider = MapProvider.AUTO
+    ) {
+        init(context)
+        val action = when (parsed.kind) {
+            LinkKind.MEDIA -> BridgeAction.MEDIA_LINK
+            LinkKind.WEB -> BridgeAction.WEB_LINK
+            else -> BridgeAction.MAP
+        }
+        val effectiveTarget = if (preferredTarget != MapProvider.AUTO) {
+            preferredTarget
+        } else if (action == BridgeAction.MAP && parsed.sourceProvider != MapProvider.UNKNOWN) {
+            parsed.sourceProvider
+        } else {
+            MapProvider.AUTO
+        }
+        saveQueue(PendingSendItem(rawText, parsed.resolvedUrl, parsed, effectiveTarget, action))
+        probeNow()
+    }
+
     suspend fun sendOrQueue(
         context: Context,
         primaryBox: DiscoveredBox?,
         rawText: String,
         preResolved: ParsedMapLink? = null,
-        preferredTarget: MapProvider
+        preferredTarget: MapProvider = MapProvider.AUTO,
+        queueOnFailure: Boolean = true
     ): Result<String> {
         init(context)
         val media = MediaLinkHelper.extractMediaLink(rawText)
@@ -500,6 +560,11 @@ object CarBridgeConnectionManager {
                 parsed = MediaLinkHelper.toWebParsedRecord(rawText, resolvedWeb)
             }
         }
+        val effectiveTarget = when {
+            preferredTarget != MapProvider.AUTO -> preferredTarget
+            action == BridgeAction.MAP && parsed.sourceProvider != MapProvider.UNKNOWN -> parsed.sourceProvider
+            else -> MapProvider.AUTO
+        }
         val resolvedUrl = parsed.resolvedUrl
         val state = BridgeRepository.state.value
         val box = primaryBox ?: state.pairedBox ?: state.discoveredBoxes.firstOrNull() ?: run {
@@ -513,9 +578,13 @@ object CarBridgeConnectionManager {
         }
 
         if (box == null) {
-            saveQueue(PendingSendItem(rawText, resolvedUrl, parsed, preferredTarget, action))
             client?.sendActiveProbe(listOfNotNull(state.lastKnownLanHost))
-            return Result.failure(IllegalStateException("Chưa thấy Box — đã xếp hàng Smart Queue, sẽ tự gửi ngay khi lên xe"))
+            return if (queueOnFailure) {
+                saveQueue(PendingSendItem(rawText, resolvedUrl, parsed, effectiveTarget, action))
+                Result.failure(IllegalStateException("Chưa thấy Box — đã xếp hàng Smart Queue, sẽ tự gửi ngay khi lên xe"))
+            } else {
+                Result.failure(IllegalStateException("Điện thoại chưa kết nối được với Android Box. Hãy kiểm tra Wi-Fi / Bluetooth trên xe."))
+            }
         }
 
         val res = client?.sendHybridToBox(
@@ -526,7 +595,7 @@ object CarBridgeConnectionManager {
             senderName = Build.MODEL ?: "Phone",
             rawText = rawText,
             resolvedUrl = resolvedUrl,
-            preferredTarget = preferredTarget,
+            preferredTarget = effectiveTarget,
             action = action,
             fallbackLanHost = if (state.proximityOnly2m) null else state.lastKnownLanHost,
             fallbackLanPort = state.lastKnownLanPort,
@@ -538,10 +607,11 @@ object CarBridgeConnectionManager {
 
         res.onSuccess { msg ->
             onBoxSeenOnline(context, box)
+            CarBridgeNotifier.cancelSendFailedNotification(context)
             saveQueue(null)
             if (!box.isLocalDemo) {
                 val spec = if (action == BridgeAction.MAP) {
-                    MapIntentLauncher.buildLaunchSpec(context, parsed, preferredTarget)
+                    MapIntentLauncher.buildLaunchSpec(context, parsed, effectiveTarget)
                 } else null
                 BridgeRepository.recordTransfer(
                     direction = when (action) {
@@ -558,8 +628,10 @@ object CarBridgeConnectionManager {
                 )
             }
         }.onFailure {
-            saveQueue(PendingSendItem(rawText, resolvedUrl, parsed, preferredTarget, action))
-            client?.sendActiveProbe()
+            if (queueOnFailure) {
+                saveQueue(PendingSendItem(rawText, resolvedUrl, parsed, effectiveTarget, action))
+            }
+            client?.sendActiveProbe(listOfNotNull(state.lastKnownLanHost))
         }
 
         return res

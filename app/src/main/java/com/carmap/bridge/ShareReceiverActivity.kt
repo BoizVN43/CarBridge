@@ -1,30 +1,25 @@
 package com.carmap.bridge
 
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -35,33 +30,38 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.core.content.pm.ShortcutManagerCompat
 import com.carmap.bridge.data.BridgeRepository
 import com.carmap.bridge.model.DiscoveredBox
+import com.carmap.bridge.model.LinkKind
 import com.carmap.bridge.model.MapProvider
 import com.carmap.bridge.model.ParsedMapLink
 import com.carmap.bridge.network.BoxNetworkConstants
 import com.carmap.bridge.network.CarBridgeConnectionManager
 import com.carmap.bridge.parser.MapLinkResolver
 import com.carmap.bridge.parser.MediaLinkHelper
-import com.carmap.bridge.ui.components.CockpitPill
 import com.carmap.bridge.ui.theme.CarMapTheme
 import com.carmap.bridge.ui.theme.LocalCockpitAccents
-import kotlinx.coroutines.launch
+import com.carmap.bridge.util.CarBridgeNotifier
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 
 class ShareReceiverActivity : ComponentActivity() {
 
@@ -75,30 +75,22 @@ class ShareReceiverActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        BridgeRepository.init(this)
         currentIntentState.value = intent
 
         setContent {
             val activeIntent = currentIntentState.value ?: intent
             val sharedText = activeIntent?.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
             val subject = activeIntent?.getStringExtra(Intent.EXTRA_SUBJECT).orEmpty()
-            val fullInput = listOf(subject, sharedText).filter { it.isNotBlank() }.joinToString("\n")
+            val fullInput = listOf(subject, sharedText).filter { it.isNotBlank() }.joinToString("\n").trim()
             val targetHostOverride = activeIntent?.getStringExtra("target_box_host")
             val shortcutId = activeIntent?.getStringExtra(ShortcutManagerCompat.EXTRA_SHORTCUT_ID)
 
             val state by BridgeRepository.state.collectAsState()
-            val scope = rememberCoroutineScope()
             var parsed by remember(fullInput) { mutableStateOf<ParsedMapLink?>(null) }
-            var selectedTarget by remember { mutableStateOf(state.phoneTargetOverride) }
-            var sending by remember { mutableStateOf(false) }
-            var searchingBox by remember { mutableStateOf(true) }
-            var statusMessage by remember(fullInput) { mutableStateOf<String?>(null) }
-
-            val activeBox = state.pairedBox
-                ?: BridgeRepository.findBoxByShortcutId(shortcutId)
-                ?: targetHostOverride?.let {
-                    DiscoveredBox("direct-$it", "Android Box ($it)", it, BoxNetworkConstants.TCP_PORT)
-                }
-                ?: state.discoveredBoxes.firstOrNull()
+            var sending by remember(fullInput) { mutableStateOf(true) }
+            var errorMessage by remember(fullInput) { mutableStateOf<String?>(null) }
+            var retryNonce by remember { mutableIntStateOf(0) }
 
             DisposableEffect(Unit) {
                 CarBridgeConnectionManager.retainDiscovery(this@ShareReceiverActivity)
@@ -107,242 +99,316 @@ class ShareReceiverActivity : ComponentActivity() {
                 }
             }
 
-            LaunchedEffect(fullInput) {
-                launch { CarBridgeConnectionManager.fastReconnectSavedEndpoints(this@ShareReceiverActivity) }
-                CarBridgeConnectionManager.probeNow()
-                val media = MediaLinkHelper.extractMediaLink(fullInput)
-                val web = if (media == null) MediaLinkHelper.extractGenericWebLink(fullInput) else null
-                val resolved = when {
-                    media != null -> MediaLinkHelper.toParsedRecord(fullInput, media)
-                    web != null -> MediaLinkHelper.toWebParsedRecord(fullInput, web)
-                    else -> MapLinkResolver.resolveAndParse(fullInput)
+            LaunchedEffect(fullInput, retryNonce) {
+                if (fullInput.isBlank()) {
+                    Toast.makeText(this@ShareReceiverActivity, "Không có liên kết để gửi", Toast.LENGTH_SHORT).show()
+                    finish()
+                    return@LaunchedEffect
+                }
+
+                sending = true
+                errorMessage = null
+
+                val referrerTarget = detectSourceMapFromReferrer()
+                val (resolved, targetBox) = coroutineScope {
+                    val resolvedDef = async { resolveInput(fullInput) }
+                    val boxDef = async { findTargetBoxFast(shortcutId, targetHostOverride) }
+                    resolvedDef.await() to boxDef.await()
                 }
                 parsed = resolved
 
-                launch {
-                    kotlinx.coroutines.delay(2500L)
-                    searchingBox = false
+                val autoTarget = when {
+                    referrerTarget != MapProvider.AUTO -> referrerTarget
+                    resolved.kind == LinkKind.MEDIA || resolved.kind == LinkKind.WEB -> MapProvider.AUTO
+                    resolved.sourceProvider != MapProvider.UNKNOWN -> resolved.sourceProvider
+                    else -> MapProvider.AUTO
                 }
 
-                val targetBoxNow = BridgeRepository.state.value.pairedBox
-                    ?: BridgeRepository.findBoxByShortcutId(shortcutId)
-                    ?: activeBox
+                val res = CarBridgeConnectionManager.sendOrQueue(
+                    context = this@ShareReceiverActivity,
+                    primaryBox = targetBox,
+                    rawText = fullInput,
+                    preResolved = resolved,
+                    preferredTarget = autoTarget,
+                    queueOnFailure = false
+                )
 
-                // Direct Share 1 chạm: tự động gửi thẳng nếu mở từ shortcut của Box
-                if (!shortcutId.isNullOrBlank() && targetBoxNow != null && fullInput.isNotBlank()) {
-                    sending = true
-                    val res = CarBridgeConnectionManager.sendOrQueue(
-                        context = this@ShareReceiverActivity,
-                        primaryBox = targetBoxNow,
-                        rawText = fullInput,
-                        preResolved = resolved,
-                        preferredTarget = selectedTarget
-                    )
+                res.onSuccess { msg ->
+                    Toast.makeText(this@ShareReceiverActivity, msg, Toast.LENGTH_SHORT).show()
+                    finish()
+                }.onFailure { err ->
+                    val reason = err.message ?: "Điện thoại chưa kết nối được với Android Box."
                     sending = false
-                    res.onSuccess { msg ->
-                        Toast.makeText(this@ShareReceiverActivity, msg, Toast.LENGTH_SHORT).show()
-                        finish()
-                    }.onFailure { err ->
-                        statusMessage = err.message ?: "Lỗi gửi nhanh"
-                    }
+                    errorMessage = reason
+                    CarBridgeNotifier.notifyBoxNotConnected(
+                        context = this@ShareReceiverActivity,
+                        destinationTitle = resolved.title,
+                        reason = reason
+                    )
                 }
             }
 
             CarMapTheme(themeMode = state.themeMode, applySystemBars = false) {
-                ShareSheetDialog(
-                    rawInput = fullInput,
-                    parsed = parsed,
-                    activeBox = activeBox,
-                    searchingBox = searchingBox,
-                    selectedTarget = selectedTarget,
-                    sending = sending,
-                    statusMessage = statusMessage,
-                    onSelectTarget = { selectedTarget = it },
-                    onSend = {
-                        sending = true
-                        statusMessage = null
-                        scope.launch {
-                            val result = CarBridgeConnectionManager.sendOrQueue(
-                                context = this@ShareReceiverActivity,
-                                primaryBox = activeBox,
-                                rawText = fullInput,
-                                preResolved = parsed,
-                                preferredTarget = selectedTarget
-                            )
-                            sending = false
-                            result.onSuccess { msg ->
-                                Toast.makeText(this@ShareReceiverActivity, msg, Toast.LENGTH_SHORT).show()
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (sending) {
+                        SendingStatusOverlayCard(destinationTitle = parsed?.title)
+                    } else if (errorMessage != null) {
+                        BoxNotConnectedPopupDialog(
+                            destinationTitle = parsed?.title ?: fullInput.lines().firstOrNull().orEmpty(),
+                            reason = errorMessage!!,
+                            onRetry = {
+                                errorMessage = null
+                                sending = true
+                                retryNonce += 1
+                            },
+                            onQueueForCar = {
+                                val resolvedNow = parsed ?: MapLinkResolver.parseImmediate(fullInput)
+                                val referrerTarget = detectSourceMapFromReferrer()
+                                val autoTarget = when {
+                                    referrerTarget != MapProvider.AUTO -> referrerTarget
+                                    resolvedNow.sourceProvider != MapProvider.UNKNOWN -> resolvedNow.sourceProvider
+                                    else -> MapProvider.AUTO
+                                }
+                                CarBridgeConnectionManager.enqueuePendingManual(
+                                    context = this@ShareReceiverActivity,
+                                    rawText = fullInput,
+                                    parsed = resolvedNow,
+                                    preferredTarget = autoTarget
+                                )
+                                Toast.makeText(
+                                    this@ShareReceiverActivity,
+                                    "Đã xếp hàng Smart Queue — sẽ tự gửi khi kết nối Box",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                                 finish()
-                            }.onFailure { err ->
-                                statusMessage = err.message ?: "Lỗi gửi"
-                            }
-                        }
-                    },
-                    onCancel = { finish() }
+                            },
+                            onOpenApp = {
+                                startActivity(
+                                    Intent(this@ShareReceiverActivity, MainActivity::class.java)
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                                )
+                                finish()
+                            },
+                            onDismiss = { finish() }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun detectSourceMapFromReferrer(): MapProvider {
+        val pkg = runCatching { referrer?.host?.lowercase() }.getOrNull() ?: return MapProvider.AUTO
+        return when (pkg) {
+            "com.google.android.apps.maps" -> MapProvider.GOOGLE_MAPS
+            "com.waze" -> MapProvider.WAZE
+            "vn.vietmap.live", "vn.vietmap.s2" -> MapProvider.VIETMAP
+            else -> MapProvider.AUTO
+        }
+    }
+
+    private suspend fun resolveInput(rawText: String): ParsedMapLink {
+        val media = MediaLinkHelper.extractMediaLink(rawText)
+        if (media != null) return MediaLinkHelper.toParsedRecord(rawText, media)
+        val web = MediaLinkHelper.extractGenericWebLink(rawText)
+        if (web != null) return MediaLinkHelper.toWebParsedRecord(rawText, web)
+
+        val parsed = MapLinkResolver.resolveAndParse(rawText)
+        if (parsed.sourceProvider == MapProvider.UNKNOWN &&
+            parsed.primaryLat == null &&
+            parsed.resolvedUrl.startsWith("http", ignoreCase = true)
+        ) {
+            val expandedMedia = MediaLinkHelper.extractMediaLink(parsed.resolvedUrl)
+            if (expandedMedia != null) return MediaLinkHelper.toParsedRecord(rawText, expandedMedia)
+            val expandedWeb = MediaLinkHelper.extractGenericWebLink(parsed.resolvedUrl, allowShortRedirect = true)
+            if (expandedWeb != null) return MediaLinkHelper.toWebParsedRecord(rawText, expandedWeb)
+        }
+        return parsed
+    }
+
+    private suspend fun findTargetBoxFast(
+        shortcutId: String?,
+        targetHostOverride: String?
+    ): DiscoveredBox? {
+        CarBridgeConnectionManager.probeNow()
+
+        val initial = BridgeRepository.findBoxByShortcutId(shortcutId)
+            ?: targetHostOverride?.let {
+                DiscoveredBox("direct-$it", "Android Box ($it)", it, BoxNetworkConstants.TCP_PORT)
+            }
+            ?: BridgeRepository.state.value.let { st ->
+                st.discoveredBoxes.firstOrNull { !it.isLocalDemo } ?: st.pairedBox
+            }
+        if (initial != null) return initial
+
+        // Try direct fast reconnect to remembered LAN / BLE endpoints first
+        val fast = CarBridgeConnectionManager.fastReconnectSavedEndpoints(this)
+        if (fast != null) return fast
+
+        // Give active UDP/NSD/BLE scan up to 1.6s to spot a Box
+        repeat(8) {
+            delay(200L)
+            val st = BridgeRepository.state.value
+            val spotted = st.discoveredBoxes.firstOrNull { !it.isLocalDemo } ?: st.pairedBox
+            if (spotted != null) return spotted
+        }
+        return null
+    }
+}
+
+@Composable
+private fun SendingStatusOverlayCard(destinationTitle: String?) {
+    val accents = LocalCockpitAccents.current
+    Surface(
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 8.dp,
+        shadowElevation = 10.dp,
+        modifier = Modifier
+            .widthIn(max = 360.dp)
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(22.dp),
+                strokeWidth = 2.5.dp,
+                color = accents.emerald
+            )
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = "Đang bắn thẳng sang Box...",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
                 )
+                if (!destinationTitle.isNullOrBlank()) {
+                    Text(
+                        text = destinationTitle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ShareSheetDialog(
-    rawInput: String,
-    parsed: ParsedMapLink?,
-    activeBox: DiscoveredBox?,
-    searchingBox: Boolean,
-    selectedTarget: MapProvider,
-    sending: Boolean,
-    statusMessage: String?,
-    onSelectTarget: (MapProvider) -> Unit,
-    onSend: () -> Unit,
-    onCancel: () -> Unit
+private fun BoxNotConnectedPopupDialog(
+    destinationTitle: String,
+    reason: String,
+    onRetry: () -> Unit,
+    onQueueForCar: () -> Unit,
+    onOpenApp: () -> Unit,
+    onDismiss: () -> Unit
 ) {
     val accents = LocalCockpitAccents.current
-    Box(
-        modifier = Modifier.fillMaxWidth(),
-        contentAlignment = Alignment.Center
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
+        modifier = Modifier
+            .widthIn(max = 420.dp)
+            .fillMaxWidth()
+            .padding(16.dp)
     ) {
-        Card(
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier
-                .widthIn(max = 460.dp)
-                .fillMaxWidth()
-                .padding(12.dp)
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Column(
-                modifier = Modifier
-                    .verticalScroll(rememberScrollState())
-                    .padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.DirectionsCar, contentDescription = null, tint = accents.emerald)
-                Spacer(Modifier.width(8.dp))
+                Icon(
+                    imageVector = Icons.Rounded.WifiOff,
+                    contentDescription = null,
+                    tint = accents.coral,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(10.dp))
                 Text(
-                    when (parsed?.kind) {
-                        com.carmap.bridge.model.LinkKind.MEDIA -> "Mở Media trên Android Box"
-                        com.carmap.bridge.model.LinkKind.WEB -> "Mở trang web trên Android Box"
-                        else -> "Gửi bản đồ lên Android Box"
-                    },
+                    text = "Chưa kết nối được với Android Box",
                     color = MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
             }
 
-            if (parsed == null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.height(18.dp).width(18.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Text("Đang giải nén & phân tích link bản đồ...", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            } else {
+            if (destinationTitle.isNotBlank()) {
                 Surface(
+                    shape = RoundedCornerShape(12.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            "${parsed.sourceProvider.displayName} · ${parsed.kind.label}",
-                            color = accents.cyan,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(parsed.title, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
-                        if (parsed.primaryLat != null && parsed.primaryLng != null) {
-                            Text(
-                                "Tọa độ: ${String.format("%.6f, %.6f", parsed.primaryLat, parsed.primaryLng)}",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                    }
-                }
-            }
-
-            if (parsed?.kind != com.carmap.bridge.model.LinkKind.MEDIA &&
-                parsed?.kind != com.carmap.bridge.model.LinkKind.WEB
-            ) {
-                Text("Mở trên Box bằng:", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    listOf(MapProvider.AUTO, MapProvider.GOOGLE_MAPS, MapProvider.WAZE, MapProvider.VIETMAP).forEach { target ->
-                        val selected = selectedTarget == target
-                        CockpitPill(
-                            onClick = { onSelectTarget(target) },
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (selected) accents.emeraldContainer else MaterialTheme.colorScheme.surfaceVariant
-                        ) {
-                            Text(
-                                text = target.displayName,
-                                fontSize = 11.5.sp,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                color = if (selected) accents.emerald else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                            )
-                        }
-                    }
+                    Text(
+                        text = destinationTitle,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
                 }
             }
 
             Text(
-                when {
-                    activeBox != null -> "Box đích: ${activeBox.name} (${activeBox.host})"
-                    searchingBox -> "Đang tìm Android Box qua LAN / BLE..."
-                    else -> "Chưa tìm thấy Android Box. Hãy bật dịch vụ trên Box!"
-                },
-                color = when {
-                    activeBox != null -> accents.emerald
-                    searchingBox -> accents.cyan
-                    else -> accents.coral
-                },
+                text = reason,
+                color = accents.amber,
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text(
+                text = "Hãy bật CarBridge trên Android Box và kiểm tra kết nối Wi-Fi / Hotspot / Bluetooth.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall
             )
 
-            if (!statusMessage.isNullOrBlank()) {
-                Text(statusMessage, color = accents.amber, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(2.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onQueueForCar,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Tự gửi sau", maxLines = 1)
+                }
+                Button(
+                    onClick = onRetry,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF10B981),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Thử lại", fontWeight = FontWeight.Bold, maxLines = 1)
+                }
             }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                OutlinedButton(
-                    onClick = onCancel,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Hủy")
+                TextButton(onClick = onOpenApp) {
+                    Text("Mở CarBridge")
                 }
-                Button(
-                    onClick = onSend,
-                    enabled = !sending && rawInput.isNotBlank(),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.weight(1.4f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (activeBox != null) Color(0xFF10B981) else Color(0xFFF59E0B),
-                        contentColor = Color.White
-                    )
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        when {
-                            sending -> "Đang gửi..."
-                            activeBox != null -> "Gửi ngay"
-                            else -> "Xếp hàng Smart Queue"
-                        },
-                        fontWeight = FontWeight.Bold
-                    )
+                TextButton(onClick = onDismiss) {
+                    Text("Đóng")
                 }
             }
         }
     }
-}
 }
