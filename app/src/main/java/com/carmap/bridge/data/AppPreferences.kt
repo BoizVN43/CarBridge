@@ -59,7 +59,6 @@ object AppPreferences {
     private const val KEY_ROOT_AUTO_RADIOS = "root_auto_enable_radios"
     private const val KEY_SIMULATE_PREVIEW = "simulate_preview_v2"
     private const val KEY_BOX_TARGET = "box_preferred_target"
-    private const val KEY_PHONE_TARGET = "phone_target_override"
 
     private const val KEY_PAIRED_ID = "paired_id"
     private const val KEY_PAIRED_NAME = "paired_name"
@@ -149,10 +148,6 @@ object AppPreferences {
             MapProvider.valueOf(p.getString(KEY_BOX_TARGET, MapProvider.AUTO.name)!!)
         }.getOrDefault(MapProvider.AUTO)
 
-        val phoneTarget = runCatching {
-            MapProvider.valueOf(p.getString(KEY_PHONE_TARGET, MapProvider.AUTO.name)!!)
-        }.getOrDefault(MapProvider.AUTO)
-
         val pairedHost = p.getString(KEY_PAIRED_HOST, null)
         val pairedBox = if (!pairedHost.isNullOrBlank()) {
             val ch = runCatching {
@@ -203,7 +198,6 @@ object AppPreferences {
             autoOpenOnBox = p.getBoolean(KEY_AUTO_OPEN, true),
             simulatePreviewOnEmulator = p.getBoolean(KEY_SIMULATE_PREVIEW, false),
             boxPreferredTarget = boxTarget,
-            phoneTargetOverride = phoneTarget,
             pairedBox = pairedBox
         )
     }
@@ -257,7 +251,6 @@ object AppPreferences {
             putBoolean(KEY_ROOT_AUTO_RADIOS, state.rootAutoEnableRadios)
             putBoolean(KEY_SIMULATE_PREVIEW, state.simulatePreviewOnEmulator)
             putString(KEY_BOX_TARGET, state.boxPreferredTarget.name)
-            putString(KEY_PHONE_TARGET, state.phoneTargetOverride.name)
 
             val box = state.pairedBox
             if (box != null) {

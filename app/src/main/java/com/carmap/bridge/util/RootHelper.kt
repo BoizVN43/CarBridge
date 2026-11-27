@@ -109,21 +109,7 @@ object RootHelper {
     }
 
     suspend fun inspectWindowState(): WindowSnapshot = withContext(Dispatchers.IO) {
-        val (_, containers) = execSu("dumpsys activity containers", 3_000L)
         val (_, activities) = execSu("dumpsys activity activities", 3_000L)
-
-        val splitIndicators = listOf(
-            "windowingMode=split-screen",
-            "windowingMode=multi-window",
-            "mWindowingMode=multi-window",
-            "windowingMode=3",
-            "windowingMode=4",
-            "windowingMode=6",
-            "split-screen-primary",
-            "split-screen-secondary"
-        )
-        val combined = "$containers\n$activities"
-        val isMulti = splitIndicators.any { combined.contains(it, ignoreCase = true) }
 
         val pkgRegex = Regex("""([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)/""")
         val visiblePkgs = linkedSetOf<String>()
@@ -143,8 +129,15 @@ object RootHelper {
             }
         }
 
+        val activeUserApps = visiblePkgs.filterNot { pkg ->
+            pkg == "com.android.systemui" ||
+                pkg == "com.google.android.googlequicksearchbox" ||
+                pkg.contains("launcher", ignoreCase = true) ||
+                pkg.contains("home", ignoreCase = true)
+        }
+
         WindowSnapshot(
-            isInMultiWindow = isMulti || visiblePkgs.size >= 2,
+            isInMultiWindow = activeUserApps.size >= 2,
             visiblePackages = visiblePkgs,
             topPackage = topPkg
         )

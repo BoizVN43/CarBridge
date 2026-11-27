@@ -33,9 +33,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextFieldColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -75,7 +77,7 @@ fun CockpitPill(
             .then(outline)
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
-        propagateMinConstraints = true
+        propagateMinConstraints = false
     ) {
         ProvideTextStyle(
             LocalTextStyle.current.copy(
@@ -92,25 +94,38 @@ fun SettingsGroupCard(
     title: String,
     content: @Composable () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
             text = title,
             fontSize = 10.5.sp,
             fontWeight = FontWeight.Bold,
-            letterSpacing = 0.7.sp,
+            letterSpacing = 0.8.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp)
         )
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
-            color = MaterialTheme.colorScheme.surface
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(14.dp)) {
                 content()
             }
         }
     }
+}
+
+@Composable
+fun cockpitTextFieldColors(): TextFieldColors {
+    val accents = LocalCockpitAccents.current
+    return OutlinedTextFieldDefaults.colors(
+        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.52f),
+        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.52f),
+        focusedBorderColor = accents.emerald,
+        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+        cursorColor = accents.emerald
+    )
 }
 
 @Composable

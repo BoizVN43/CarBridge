@@ -164,7 +164,7 @@ class NavigationDispatchActivity : ComponentActivity() {
             remoteIp: String
         ) {
             val coords = if (parsed.primaryLat != null && parsed.primaryLng != null) {
-                String.format("%.6f, %.6f", parsed.primaryLat, parsed.primaryLng)
+                String.format(java.util.Locale.US, "%.6f, %.6f", parsed.primaryLat, parsed.primaryLng)
             } else {
                 null
             }

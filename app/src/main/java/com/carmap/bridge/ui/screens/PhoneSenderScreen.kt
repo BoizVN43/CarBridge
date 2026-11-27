@@ -29,10 +29,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DirectionsCar
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LocalParking
 import androidx.compose.material.icons.rounded.LocationOn
@@ -40,6 +42,7 @@ import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.QrCodeScanner
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Route
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Settings
@@ -50,6 +53,7 @@ import androidx.compose.material.icons.rounded.WifiTethering
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -84,6 +88,7 @@ import com.carmap.bridge.parser.MediaLinkHelper
 import com.carmap.bridge.ui.components.CockpitPill
 import com.carmap.bridge.ui.components.PhoneQrPairInputDialog
 import com.carmap.bridge.ui.components.QrCameraScannerDialog
+import com.carmap.bridge.ui.components.cockpitTextFieldColors
 import com.carmap.bridge.ui.theme.AdaptiveMetrics
 import com.carmap.bridge.ui.theme.CockpitAccents
 import com.carmap.bridge.ui.theme.LocalAdaptiveMetrics
@@ -440,8 +445,9 @@ private fun HeroBoxTargetCard(
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        color = Color.Transparent
+        shape = RoundedCornerShape(22.dp),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, Color(0x18FFFFFF))
     ) {
         Box(
             modifier = Modifier
@@ -784,8 +790,9 @@ private fun DestinationComposeCard(
     val context = LocalContext.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Column(
             modifier = Modifier.padding(adaptive.cardPadding),
@@ -797,10 +804,10 @@ private fun DestinationComposeCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "GỬI BẢN ĐỒ / MEDIA / TRANG WEB",
+                    text = "ĐIỂM ĐẾN & LIÊN KẾT",
                     fontSize = adaptive.sp(10.5f),
                     fontWeight = FontWeight.Bold,
-                    letterSpacing = adaptive.sp(0.7f),
+                    letterSpacing = adaptive.sp(0.8f),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 CockpitPill(
@@ -833,6 +840,7 @@ private fun DestinationComposeCard(
                 minLines = 1,
                 maxLines = 2,
                 shape = RoundedCornerShape(14.dp),
+                colors = cockpitTextFieldColors(),
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -924,8 +932,9 @@ private fun ClipboardBridgeCard(
     val context = LocalContext.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Column(
             modifier = Modifier.padding(adaptive.cardPadding),
@@ -937,10 +946,10 @@ private fun ClipboardBridgeCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "CLIPBOARD 2 CHIỀU (ĐT ↔ BOX)",
+                    text = "CLIPBOARD 2 CHIỀU",
                     fontSize = adaptive.sp(10.5f),
                     fontWeight = FontWeight.Bold,
-                    letterSpacing = adaptive.sp(0.7f),
+                    letterSpacing = adaptive.sp(0.8f),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -984,7 +993,8 @@ private fun ClipboardBridgeCard(
                 },
                 minLines = 1,
                 maxLines = 3,
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = cockpitTextFieldColors(),
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -995,7 +1005,7 @@ private fun ClipboardBridgeCard(
                 OutlinedButton(
                     onClick = {
                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                        val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
+                        val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
                         if (clip.isNotBlank()) {
                             onSendClipboard(clip)
                         } else {
@@ -1004,8 +1014,8 @@ private fun ClipboardBridgeCard(
                     },
                     modifier = Modifier
                         .weight(1f)
-                        .height(adaptive.dp(40f)),
-                    shape = RoundedCornerShape(12.dp),
+                        .height(adaptive.dp(44f)),
+                    shape = RoundedCornerShape(14.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp)
                 ) {
                     Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(15.dp))
@@ -1018,12 +1028,12 @@ private fun ClipboardBridgeCard(
                     enabled = clipDraft.isNotBlank(),
                     modifier = Modifier
                         .weight(1f)
-                        .height(adaptive.dp(40f)),
-                    shape = RoundedCornerShape(12.dp),
+                        .height(adaptive.dp(44f)),
+                    shape = RoundedCornerShape(14.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = accents.cyan,
-                        contentColor = Color(0xFF041A24)
+                        contentColor = if (accents.isDark) Color(0xFF041A24) else Color.White
                     )
                 ) {
                     Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = null, modifier = Modifier.size(15.dp))
@@ -1096,18 +1106,19 @@ private fun CarToolsCard(
     }
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Column(
             modifier = Modifier.padding(adaptive.cardPadding),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "TIỆN ÍCH XE (APK / ẢNH & ĐỖ XE)",
+                text = "TIỆN ÍCH XE",
                 fontSize = adaptive.sp(10.5f),
                 fontWeight = FontWeight.Bold,
-                letterSpacing = adaptive.sp(0.7f),
+                letterSpacing = adaptive.sp(0.8f),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
@@ -1117,28 +1128,43 @@ private fun CarToolsCard(
             ) {
                 CockpitPill(
                     onClick = onPickFileToSend,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(14.dp),
                     color = accents.cyanContainer,
                     modifier = Modifier
                         .weight(1f)
-                        .height(adaptive.dp(42f))
+                        .height(adaptive.dp(44f))
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Icon(Icons.Rounded.UploadFile, contentDescription = null, tint = accents.cyan, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(5.dp))
-                        Text("Gửi APK / Ảnh", fontSize = adaptive.sp(12f), fontWeight = FontWeight.Bold, color = accents.cyan, maxLines = 1)
+                        Text(
+                            text = "Gửi APK / Ảnh",
+                            fontSize = adaptive.sp(12f),
+                            fontWeight = FontWeight.Bold,
+                            color = accents.cyan,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
 
                 CockpitPill(
                     onClick = if (state.parkingPin != null) onFindParkedCar else onSaveParkingPin,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(14.dp),
                     color = accents.emeraldContainer,
                     modifier = Modifier
                         .weight(1f)
-                        .height(adaptive.dp(42f))
+                        .height(adaptive.dp(44f))
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Icon(Icons.Rounded.LocalParking, contentDescription = null, tint = accents.emerald, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(5.dp))
                         Text(
@@ -1146,7 +1172,8 @@ private fun CarToolsCard(
                             fontSize = adaptive.sp(12f),
                             fontWeight = FontWeight.Bold,
                             color = accents.emerald,
-                            maxLines = 1
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -1159,13 +1186,14 @@ private fun CarToolsCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "${state.parkingPin.label} · ${String.format("%.4f, %.4f", state.parkingPin.lat, state.parkingPin.lng)}",
+                        text = "${state.parkingPin.label} · ${String.format(Locale.US, "%.4f, %.4f", state.parkingPin.lat, state.parkingPin.lng)}",
                         fontSize = adaptive.sp(11f),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
+                    Spacer(Modifier.width(8.dp))
                     Text(
                         text = "Cập nhật vị trí",
                         fontSize = adaptive.sp(11f),
@@ -1195,12 +1223,15 @@ private fun CarToolsCard(
                 }
             }
 
-            Spacer(Modifier.height(2.dp))
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 2.dp),
+                color = MaterialTheme.colorScheme.outline
+            )
             Text(
-                text = "ĐIỀU KHIỂN BOX TỪ XA (ROOT)",
-                fontSize = adaptive.sp(9.5f),
+                text = "ĐIỀU KHIỂN BOX TỪ XA",
+                fontSize = adaptive.sp(10f),
                 fontWeight = FontWeight.Bold,
-                letterSpacing = adaptive.sp(0.6f),
+                letterSpacing = adaptive.sp(0.8f),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Row(
@@ -1208,28 +1239,38 @@ private fun CarToolsCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 listOf(
-                    Triple("KEY_HOME", "Home", accents.cyanContainer to accents.cyan),
-                    Triple("FORCE_STOP_MAPS", "Dọn Maps", accents.amberContainer to accents.amber),
-                    Triple("REBOOT", "Reboot Box", accents.coralContainer to accents.coral)
-                ).forEach { (cmd, label, colors) ->
+                    Triple("KEY_HOME", "Home" to Icons.Rounded.Home, accents.cyanContainer to accents.cyan),
+                    Triple("FORCE_STOP_MAPS", "Dọn Maps" to Icons.Rounded.CleaningServices, accents.amberContainer to accents.amber),
+                    Triple("REBOOT", "Reboot Box" to Icons.Rounded.RestartAlt, accents.coralContainer to accents.coral)
+                ).forEach { (cmd, labelIcon, colors) ->
+                    val (label, icon) = labelIcon
                     CockpitPill(
                         onClick = {
                             if (cmd == "REBOOT") confirmReboot = true
                             else onSendBoxCommand(cmd, label)
                         },
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         color = colors.first,
                         modifier = Modifier
                             .weight(1f)
-                            .height(adaptive.dp(34f))
+                            .height(adaptive.dp(40f))
                     ) {
-                        Text(
-                            text = label,
-                            fontSize = adaptive.sp(11f),
-                            fontWeight = FontWeight.Bold,
-                            color = colors.second,
-                            maxLines = 1
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(icon, contentDescription = null, tint = colors.second, modifier = Modifier.size(13.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = label,
+                                fontSize = adaptive.sp(11f),
+                                fontWeight = FontWeight.Bold,
+                                color = colors.second,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
@@ -1244,14 +1285,21 @@ private fun RecentHistoryCard(
     adaptive: AdaptiveMetrics,
     onPickRecent: (String) -> Unit
 ) {
+    val context = LocalContext.current
+    val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    var expanded by remember { mutableStateOf(false) }
+    val visibleItems = remember(state.history, expanded) {
+        if (expanded) state.history else state.history.take(4)
+    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Column(
             modifier = Modifier.padding(adaptive.cardPadding),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1262,7 +1310,7 @@ private fun RecentHistoryCard(
                     text = "ĐÃ GỬI GẦN ĐÂY (${state.history.size})",
                     fontSize = adaptive.sp(10.5f),
                     fontWeight = FontWeight.Bold,
-                    letterSpacing = adaptive.sp(0.7f),
+                    letterSpacing = adaptive.sp(0.8f),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
@@ -1273,30 +1321,40 @@ private fun RecentHistoryCard(
                     modifier = Modifier.clickable { BridgeRepository.clearHistory() }
                 )
             }
-            state.history.take(4).forEach { rec ->
+            visibleItems.forEach { rec ->
+                val isInfoKind = rec.parsed.kind == LinkKind.MEDIA || rec.parsed.kind == LinkKind.WEB
                 CockpitPill(
                     onClick = { onPickRecent(rec.parsed.rawInput) },
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                            .padding(horizontal = 10.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = when (rec.parsed.kind) {
-                                LinkKind.MEDIA -> Icons.Rounded.MusicNote
-                                LinkKind.WEB -> Icons.Rounded.Language
-                                else -> Icons.Rounded.LocationOn
-                            },
-                            contentDescription = null,
-                            tint = if (rec.parsed.kind == LinkKind.MEDIA || rec.parsed.kind == LinkKind.WEB) accents.cyan else accents.emerald,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(Modifier.width(7.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(if (isInfoKind) accents.cyanContainer else accents.emeraldContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = when (rec.parsed.kind) {
+                                    LinkKind.MEDIA -> Icons.Rounded.MusicNote
+                                    LinkKind.WEB -> Icons.Rounded.Language
+                                    else -> Icons.Rounded.LocationOn
+                                },
+                                contentDescription = null,
+                                tint = if (isInfoKind) accents.cyan else accents.emerald,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = rec.parsed.title,
@@ -1307,13 +1365,56 @@ private fun RecentHistoryCard(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "${rec.direction} · ${rec.transportUsed}",
+                                text = "${timeFmt.format(Date(rec.timestampMs))} · ${rec.direction} · ${rec.transportUsed}",
                                 fontSize = adaptive.sp(10.5f),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
+                        if (rec.parsed.kind != LinkKind.MEDIA &&
+                            rec.parsed.kind != LinkKind.WEB &&
+                            rec.parsed.kind != LinkKind.CLIPBOARD &&
+                            rec.parsed.kind != LinkKind.FILE
+                        ) {
+                            Spacer(Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        val label = rec.parsed.title.take(24)
+                                        BridgeRepository.addSavedPlace(label, rec.parsed.rawInput)
+                                        Toast.makeText(context, "Đã ghim: $label", Toast.LENGTH_SHORT).show()
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.PushPin,
+                                    contentDescription = "Ghim địa điểm",
+                                    tint = accents.cyan,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                        }
                     }
+                }
+            }
+            if (state.history.size > 4) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { expanded = !expanded }
+                        .padding(vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (expanded) "Thu gọn" else "Xem tất cả (${state.history.size})",
+                        fontSize = adaptive.sp(11.5f),
+                        fontWeight = FontWeight.Bold,
+                        color = accents.cyan
+                    )
                 }
             }
         }
@@ -1342,7 +1443,8 @@ private fun AddSavedPlaceDialog(
                     onValueChange = { label = it },
                     placeholder = { Text("VD: Về nhà, Cơ quan, Trường con...") },
                     singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = cockpitTextFieldColors(),
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
@@ -1351,7 +1453,8 @@ private fun AddSavedPlaceDialog(
                     placeholder = { Text("VD: https://maps.app.goo.gl/... hoặc tọa độ") },
                     minLines = 1,
                     maxLines = 2,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = cockpitTextFieldColors(),
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -1362,7 +1465,7 @@ private fun AddSavedPlaceDialog(
                 enabled = label.isNotBlank() && link.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = accents.emerald,
-                    contentColor = Color(0xFF042116)
+                    contentColor = if (accents.isDark) Color(0xFF042116) else Color.White
                 ),
                 shape = RoundedCornerShape(999.dp)
             ) {
@@ -1390,8 +1493,8 @@ private fun SenderActionButtons(
             onClick = onPaste,
             modifier = Modifier
                 .weight(0.85f)
-                .height(adaptive.dp(42f)),
-            shape = RoundedCornerShape(13.dp),
+                .height(adaptive.dp(44f)),
+            shape = RoundedCornerShape(14.dp),
             contentPadding = PaddingValues(horizontal = 8.dp)
         ) {
             Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(15.dp))
@@ -1404,8 +1507,8 @@ private fun SenderActionButtons(
             enabled = sendEnabled,
             modifier = Modifier
                 .weight(1.35f)
-                .height(adaptive.dp(42f)),
-            shape = RoundedCornerShape(13.dp),
+                .height(adaptive.dp(44f)),
+            shape = RoundedCornerShape(14.dp),
             contentPadding = PaddingValues(horizontal = 8.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color(0xFF10B981),

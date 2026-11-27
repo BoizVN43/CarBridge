@@ -235,27 +235,29 @@ class ShareReceiverActivity : ComponentActivity() {
     ): DiscoveredBox? {
         CarBridgeConnectionManager.probeNow()
 
-        val initial = BridgeRepository.findBoxByShortcutId(shortcutId)
+        val stateNow = BridgeRepository.state.value
+        val shortcutMatch = BridgeRepository.findBoxByShortcutId(shortcutId)?.takeIf { sc ->
+            stateNow.discoveredBoxes.any { it.id == sc.id && !it.isLocalDemo }
+        }
+        val liveBox = shortcutMatch
             ?: targetHostOverride?.let {
                 DiscoveredBox("direct-$it", "Android Box ($it)", it, BoxNetworkConstants.TCP_PORT)
             }
-            ?: BridgeRepository.state.value.let { st ->
-                st.discoveredBoxes.firstOrNull { !it.isLocalDemo } ?: st.pairedBox
-            }
-        if (initial != null) return initial
+            ?: stateNow.discoveredBoxes.firstOrNull { !it.isLocalDemo }
+        if (liveBox != null) return liveBox
 
-        // Try direct fast reconnect to remembered LAN / BLE endpoints first
+        // Verify saved LAN/BLE endpoints first (<100ms TCP PING or BLE upgrade) before trusting stale IP
         val fast = CarBridgeConnectionManager.fastReconnectSavedEndpoints(this)
         if (fast != null) return fast
 
-        // Give active UDP/NSD/BLE scan up to 1.6s to spot a Box
-        repeat(8) {
+        // Give active UDP/NSD/BLE scan up to 1.2s to spot a Box
+        repeat(6) {
             delay(200L)
             val st = BridgeRepository.state.value
-            val spotted = st.discoveredBoxes.firstOrNull { !it.isLocalDemo } ?: st.pairedBox
+            val spotted = st.discoveredBoxes.firstOrNull { !it.isLocalDemo }
             if (spotted != null) return spotted
         }
-        return null
+        return BridgeRepository.state.value.pairedBox
     }
 }
 

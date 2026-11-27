@@ -61,7 +61,6 @@ data class BridgeUiState(
     val autoOpenOnBox: Boolean = true,
     val simulatePreviewOnEmulator: Boolean = false,
     val boxPreferredTarget: MapProvider = MapProvider.AUTO,
-    val phoneTargetOverride: MapProvider = MapProvider.AUTO,
     val discoveredBoxes: List<DiscoveredBox> = emptyList(),
     val pairedBox: DiscoveredBox? = null,
     val history: List<SharedTransferRecord> = emptyList(),
@@ -420,8 +419,7 @@ object BridgeRepository {
         pin: String? = null,
         autoOpen: Boolean? = null,
         simulatePreview: Boolean? = null,
-        boxPreferredTarget: MapProvider? = null,
-        phoneTargetOverride: MapProvider? = null
+        boxPreferredTarget: MapProvider? = null
     ) {
         _state.update {
             it.copy(
@@ -429,13 +427,12 @@ object BridgeRepository {
                 pairingPin = pin ?: it.pairingPin,
                 autoOpenOnBox = autoOpen ?: it.autoOpenOnBox,
                 simulatePreviewOnEmulator = simulatePreview ?: it.simulatePreviewOnEmulator,
-                boxPreferredTarget = boxPreferredTarget ?: it.boxPreferredTarget,
-                phoneTargetOverride = phoneTargetOverride ?: it.phoneTargetOverride
+                boxPreferredTarget = boxPreferredTarget ?: it.boxPreferredTarget
             )
         }
         val isTypingEdit = (boxName != null || pin != null) &&
             autoOpen == null && simulatePreview == null &&
-            boxPreferredTarget == null && phoneTargetOverride == null
+            boxPreferredTarget == null
         persistConfig(debounced = isTypingEdit)
     }
 

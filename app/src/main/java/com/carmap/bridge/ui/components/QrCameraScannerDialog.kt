@@ -82,6 +82,7 @@ import com.google.zxing.PlanarYUVLuminanceSource
 import com.google.zxing.common.HybridBinarizer
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 @Composable
 fun QrCameraScannerDialog(
@@ -130,8 +131,14 @@ fun QrCameraScannerDialog(
         ) {
             if (hasCameraPerm) {
                 val analyzerExecutor = remember { Executors.newSingleThreadExecutor() }
+                val cameraProviderRef = remember { AtomicReference<ProcessCameraProvider?>(null) }
+                val disposed = remember { AtomicBoolean(false) }
                 DisposableEffect(Unit) {
-                    onDispose { analyzerExecutor.shutdown() }
+                    onDispose {
+                        disposed.set(true)
+                        runCatching { cameraProviderRef.getAndSet(null)?.unbindAll() }
+                        analyzerExecutor.shutdown()
+                    }
                 }
 
                 AndroidView(
@@ -148,8 +155,10 @@ fun QrCameraScannerDialog(
 
                         val providerFuture = ProcessCameraProvider.getInstance(ctx)
                         providerFuture.addListener({
+                            if (disposed.get()) return@addListener
                             runCatching {
                                 val provider = providerFuture.get()
+                                cameraProviderRef.set(provider)
                                 val preview = Preview.Builder().build().also {
                                     it.surfaceProvider = previewView.surfaceProvider
                                 }
@@ -167,7 +176,7 @@ fun QrCameraScannerDialog(
                                 }
 
                                 analysis.setAnalyzer(analyzerExecutor) { imageProxy ->
-                                    if (handled.get()) {
+                                    if (handled.get() || disposed.get()) {
                                         imageProxy.close()
                                         return@setAnalyzer
                                     }
@@ -190,13 +199,15 @@ fun QrCameraScannerDialog(
                                 }
 
                                 provider.unbindAll()
-                                val cam = provider.bindToLifecycle(
-                                    lifecycleOwner,
-                                    CameraSelector.DEFAULT_BACK_CAMERA,
-                                    preview,
-                                    analysis
-                                )
-                                cameraRef = cam
+                                if (!disposed.get()) {
+                                    val cam = provider.bindToLifecycle(
+                                        lifecycleOwner,
+                                        CameraSelector.DEFAULT_BACK_CAMERA,
+                                        preview,
+                                        analysis
+                                    )
+                                    cameraRef = cam
+                                }
                             }.onFailure {
                                 statusHint = "Không mở được camera: ${it.localizedMessage ?: "lỗi phần cứng"}"
                             }

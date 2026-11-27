@@ -63,6 +63,7 @@ import com.carmap.bridge.model.LinkKind
 import com.carmap.bridge.model.SharedTransferRecord
 import com.carmap.bridge.ui.components.BoxQrPairingDialog
 import com.carmap.bridge.ui.components.CockpitPill
+import com.carmap.bridge.ui.components.cockpitTextFieldColors
 import com.carmap.bridge.ui.theme.AdaptiveMetrics
 import com.carmap.bridge.ui.theme.CockpitAccents
 import com.carmap.bridge.ui.theme.LocalAdaptiveMetrics
@@ -135,7 +136,8 @@ fun BoxDashboardScreen(
                         verticalArrangement = Arrangement.spacedBy(adaptive.sectionGap)
                     ) {
                         BoxStatusHeroCard(state, canDrawOverlays, accents, adaptive)
-                        if (!canDrawOverlays) {
+                        val rootActive = state.rootModeEnabled && state.rootDetected
+                        if (!canDrawOverlays && !rootActive) {
                             OverlayWarningCard(accents, adaptive, onOpenSettings)
                         }
                         if (!state.lastReceivedClipboard.isNullOrBlank()) {
@@ -147,7 +149,7 @@ fun BoxDashboardScreen(
                         modifier = Modifier
                             .weight(1.18f)
                             .padding(bottom = adaptive.navBottomPadding),
-                        shape = RoundedCornerShape(20.dp),
+                        shape = RoundedCornerShape(22.dp),
                         color = MaterialTheme.colorScheme.surface,
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                     ) {
@@ -205,7 +207,7 @@ fun BoxDashboardScreen(
                     )
                 }
                 item { BoxStatusHeroCard(state, canDrawOverlays, accents, adaptive) }
-                if (!canDrawOverlays) {
+                if (!canDrawOverlays && !(state.rootModeEnabled && state.rootDetected)) {
                     item { OverlayWarningCard(accents, adaptive, onOpenSettings) }
                 }
                 if (!state.lastReceivedClipboard.isNullOrBlank()) {
@@ -219,8 +221,9 @@ fun BoxDashboardScreen(
                     item {
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(18.dp),
-                            color = MaterialTheme.colorScheme.surface
+                            shape = RoundedCornerShape(22.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                         ) {
                             EmptyHistoryInline(adaptive)
                         }
@@ -352,10 +355,16 @@ private fun BoxStatusHeroCard(
     val heroBrush = remember(accents) {
         Brush.verticalGradient(listOf(accents.heroObsidianTop, accents.heroObsidian))
     }
+    val lanIp = remember(state.boxServiceRunning) {
+        com.carmap.bridge.network.LanBroadcastHelper.localIpv4Address()
+    }
+    val rootActive = state.rootModeEnabled && state.rootDetected
+    val bgReady = canDrawOverlays || rootActive
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        color = Color.Transparent
+        shape = RoundedCornerShape(22.dp),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, Color(0x18FFFFFF))
     ) {
         Box(
             modifier = Modifier
@@ -380,27 +389,45 @@ private fun BoxStatusHeroCard(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "App bản đồ: ${state.boxPreferredTarget.displayName}",
-                            fontSize = adaptive.sp(13.5f),
+                            text = "LAN: ${lanIp ?: "Chưa có Wi-Fi"} · ${state.boxPreferredTarget.displayName}",
+                            fontSize = adaptive.sp(13f),
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = Color(0x1C34D399)
-                    ) {
-                        Text(
-                            text = "PIN ${state.pairingPin}",
-                            fontSize = adaptive.sp(11f),
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF34D399),
-                            maxLines = 1,
-                            softWrap = false,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                        )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (rootActive) {
+                            Surface(
+                                shape = RoundedCornerShape(999.dp),
+                                color = Color(0x2438BDF8)
+                            ) {
+                                Text(
+                                    text = "ROOT",
+                                    fontSize = adaptive.sp(10.5f),
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF38BDF8),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = Color(0x1C34D399)
+                        ) {
+                            Text(
+                                text = "PIN ${state.pairingPin.ifBlank { "--" }}",
+                                fontSize = adaptive.sp(11f),
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF34D399),
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                            )
+                        }
                     }
                 }
 
@@ -409,7 +436,17 @@ private fun BoxStatusHeroCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     BoxMetricPill("Tự mở", if (state.autoOpenOnBox) "Bật" else "Tắt", state.autoOpenOnBox, adaptive, Modifier.weight(1f))
-                    BoxMetricPill("Mở từ nền", if (canDrawOverlays) "Đã cấp" else "Thiếu", canDrawOverlays, adaptive, Modifier.weight(1f))
+                    BoxMetricPill(
+                        "Mở từ nền",
+                        when {
+                            canDrawOverlays -> "Đã cấp"
+                            rootActive -> "Root OK"
+                            else -> "Thiếu"
+                        },
+                        bgReady,
+                        adaptive,
+                        Modifier.weight(1f)
+                    )
                     BoxMetricPill("Đã nhận", "${state.history.size} mục", true, adaptive, Modifier.weight(1f))
                 }
             }
@@ -426,7 +463,7 @@ private fun BoxClipboardCard(
     val context = LocalContext.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(22.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, accents.cyan.copy(alpha = 0.35f))
     ) {
@@ -525,7 +562,7 @@ private fun HistorySectionTitle(count: Int, accents: CockpitAccents, adaptive: A
                 text = "LỊCH SỬ ĐIỂM ĐẾN ($count)",
                 fontSize = adaptive.sp(10.5f),
                 fontWeight = FontWeight.Bold,
-                letterSpacing = adaptive.sp(0.7f),
+                letterSpacing = adaptive.sp(0.8f),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -549,7 +586,8 @@ private fun HistorySearchBar(query: String, onQueryChange: (String) -> Unit) {
         leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(17.dp)) },
         placeholder = { Text("Tìm điểm đến đã lưu...") },
         singleLine = true,
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = cockpitTextFieldColors(),
         modifier = Modifier.fillMaxWidth()
     )
 }
@@ -588,7 +626,8 @@ private fun HistoryItemRow(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Row(
             modifier = Modifier

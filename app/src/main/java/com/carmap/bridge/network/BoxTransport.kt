@@ -15,6 +15,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.BufferedInputStream
@@ -146,6 +147,7 @@ class BoxServerTransport(
     private var nsdManager: NsdManager? = null
     private var regListener: NsdManager.RegistrationListener? = null
     private var multicastLock: WifiManager.MulticastLock? = null
+    private val fileTransferSemaphore = Semaphore(2)
 
     fun start() {
         if (serverJob?.isActive == true) return
@@ -315,34 +317,49 @@ class BoxServerTransport(
                     return
                 }
 
-                val dir = File(context.cacheDir, "received_files").apply { mkdirs() }
-                val outFile = File(dir, safeName)
-                var remaining = fileSize
-                val buf = ByteArray(32 * 1024)
-                outFile.outputStream().buffered(32 * 1024).use { out ->
-                    while (remaining > 0L) {
-                        val toRead = minOf(buf.size.toLong(), remaining).toInt()
-                        val n = rawIn.read(buf, 0, toRead)
-                        if (n <= 0) break
-                        out.write(buf, 0, n)
-                        remaining -= n
+                if (!fileTransferSemaphore.tryAcquire()) {
+                    val err = JSONObject().apply {
+                        put("ok", false)
+                        put("message", "Box đang nhận tệp khác, vui lòng thử lại sau vài giây")
+                    }.toString()
+                    writer.write(err)
+                    writer.newLine()
+                    writer.flush()
+                    return
+                }
+
+                try {
+                    val dir = File(context.cacheDir, "received_files").apply { mkdirs() }
+                    val outFile = File(dir, safeName)
+                    var remaining = fileSize
+                    val buf = ByteArray(32 * 1024)
+                    outFile.outputStream().buffered(32 * 1024).use { out ->
+                        while (remaining > 0L) {
+                            val toRead = minOf(buf.size.toLong(), remaining).toInt()
+                            val n = rawIn.read(buf, 0, toRead)
+                            if (n <= 0) break
+                            out.write(buf, 0, n)
+                            remaining -= n
+                        }
+                        out.flush()
                     }
-                    out.flush()
+                    val (ok, message) = if (remaining == 0L) {
+                        onFileReceived(safeName, mimeType, outFile, pin, remoteIp)
+                    } else {
+                        outFile.delete()
+                        false to "Truyền tệp bị gián đoạn giữa chừng"
+                    }
+                    val resp = JSONObject().apply {
+                        put("ok", ok)
+                        put("boxName", boxNameProvider())
+                        put("message", message)
+                    }.toString()
+                    writer.write(resp)
+                    writer.newLine()
+                    writer.flush()
+                } finally {
+                    fileTransferSemaphore.release()
                 }
-                val (ok, message) = if (remaining == 0L) {
-                    onFileReceived(safeName, mimeType, outFile, pin, remoteIp)
-                } else {
-                    outFile.delete()
-                    false to "Truyền tệp bị gián đoạn giữa chừng"
-                }
-                val resp = JSONObject().apply {
-                    put("ok", ok)
-                    put("boxName", boxNameProvider())
-                    put("message", message)
-                }.toString()
-                writer.write(resp)
-                writer.newLine()
-                writer.flush()
                 return
             }
 

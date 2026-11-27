@@ -74,6 +74,7 @@ import com.carmap.bridge.ui.components.QrCameraScannerDialog
 import com.carmap.bridge.ui.components.SettingsActionRow
 import com.carmap.bridge.ui.components.SettingsDivider
 import com.carmap.bridge.ui.components.SettingsGroupCard
+import com.carmap.bridge.ui.components.cockpitTextFieldColors
 import com.carmap.bridge.ui.theme.AdaptiveMetrics
 import com.carmap.bridge.ui.theme.CockpitAccents
 import com.carmap.bridge.ui.theme.LocalAdaptiveMetrics
@@ -461,14 +462,15 @@ private fun PhoneConnectionSettingsCard(
                 onValueChange = onManualIpChange,
                 placeholder = { Text("IP Box (VD: 192.168.1.20)") },
                 singleLine = true,
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = cockpitTextFieldColors(),
                 modifier = Modifier.weight(1f)
             )
             Button(
                 onClick = onPairManual,
                 enabled = manualIp.isNotBlank(),
                 modifier = Modifier.height(52.dp),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF10B981),
                     contentColor = Color.White
@@ -637,7 +639,8 @@ private fun BoxIdentitySettingsCard(
                 onValueChange = { BridgeRepository.updateSettings(boxName = it) },
                 label = { Text("Tên Android Box") },
                 singleLine = true,
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = cockpitTextFieldColors(),
                 modifier = Modifier.weight(1.65f)
             )
             OutlinedTextField(
@@ -645,7 +648,8 @@ private fun BoxIdentitySettingsCard(
                 onValueChange = { BridgeRepository.updateSettings(pin = it.take(6)) },
                 label = { Text("PIN") },
                 singleLine = true,
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = cockpitTextFieldColors(),
                 modifier = Modifier.weight(0.55f)
             )
         }
@@ -900,6 +904,15 @@ private fun RootSettingsCard(
             }
         )
         if (state.rootModeEnabled) {
+            if (state.pairingPin.isBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Khuyến nghị đặt mã PIN ghép nối ở mục trên để bảo vệ lệnh Root & cài APK ngầm.",
+                    fontSize = adaptive.sp(11f),
+                    color = accents.amber,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
             SettingsDivider()
             SettingsToggleRow(
                 title = "Giữ / Tự chia đôi màn hình (Split-Screen)",

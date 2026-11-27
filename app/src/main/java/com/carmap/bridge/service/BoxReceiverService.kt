@@ -328,6 +328,9 @@ class BoxReceiverService : Service() {
             }
 
             BridgeAction.BOX_SYSTEM_CMD -> {
+                if (state.pairingPin.isBlank()) {
+                    return false to "Hãy đặt mã PIN ghép nối trên Box để bật điều khiển Root từ xa"
+                }
                 if (!state.rootModeEnabled || (!RootHelper.isRootGranted && !RootHelper.checkRootAccess())) {
                     return false to "Cần bật Chế độ Root nâng cao trên Android Box"
                 }
@@ -512,6 +515,7 @@ class BoxReceiverService : Service() {
             mimeType.contains("android.package-archive", ignoreCase = true)
         acquireBriefWakeLock()
         val silentInstalled = if (isApk &&
+            state.pairingPin.isNotBlank() &&
             state.rootModeEnabled &&
             state.rootSilentInstall &&
             RootHelper.isRootGranted

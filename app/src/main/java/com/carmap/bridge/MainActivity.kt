@@ -314,7 +314,8 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            DisposableEffect(lifecycleOwner) {
+            DisposableEffect(lifecycleOwner, state.roleConfigured, state.role) {
+                val shouldDiscover = state.roleConfigured && state.role == DeviceRole.PHONE_SENDER
                 val observer = LifecycleEventObserver { _, event ->
                     if (event == Lifecycle.Event.ON_RESUME) {
                         canDrawOverlays = Settings.canDrawOverlays(this@MainActivity)
@@ -324,8 +325,10 @@ class MainActivity : ComponentActivity() {
                             ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) ==
                                 PackageManager.PERMISSION_GRANTED
                         } else true
-                        CarBridgeConnectionManager.probeNow()
-                        inspectClipboardForSuggestion()
+                        if (shouldDiscover) {
+                            CarBridgeConnectionManager.probeNow()
+                            inspectClipboardForSuggestion()
+                        }
                         scope.launch {
                             AppUpdater.checkForUpdate(
                                 context = this@MainActivity,
@@ -336,10 +339,14 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 lifecycleOwner.lifecycle.addObserver(observer)
-                CarBridgeConnectionManager.retainDiscovery(this@MainActivity)
+                if (shouldDiscover) {
+                    CarBridgeConnectionManager.retainDiscovery(this@MainActivity)
+                }
                 onDispose {
                     lifecycleOwner.lifecycle.removeObserver(observer)
-                    CarBridgeConnectionManager.releaseDiscovery()
+                    if (shouldDiscover) {
+                        CarBridgeConnectionManager.releaseDiscovery()
+                    }
                 }
             }
 

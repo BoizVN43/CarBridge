@@ -90,9 +90,9 @@ data class AdaptiveMetrics(
                 isTwoColumn = isTwoColumn,
                 isLandscape = isLandscape,
                 scale = scale,
-                screenPadding = if (isTwoColumn) 16.dp else (12f * scale).dp,
-                sectionGap = if (isTwoColumn) 10.dp else (8f * scale).dp,
-                cardPadding = if (isTwoColumn) 13.dp else (12f * scale).dp,
+                screenPadding = if (isTwoColumn) 16.dp else (14f * scale).dp,
+                sectionGap = if (isTwoColumn) 12.dp else (12f * scale).dp,
+                cardPadding = if (isTwoColumn) 16.dp else (14f * scale).dp,
                 navBottomPadding = if (isLandscape) 68.dp else 78.dp
             )
         }
@@ -102,13 +102,13 @@ data class AdaptiveMetrics(
 private val LightAccents = CockpitAccents(
     isDark = false,
     emerald = Color(0xFF10B981),
-    emeraldContainer = Color(0x2410B981),
+    emeraldContainer = Color(0x1E10B981),
     cyan = Color(0xFF0284C7),
-    cyanContainer = Color(0x2422D3EE),
+    cyanContainer = Color(0x1C0284C7),
     coral = Color(0xFFE0523C),
-    coralContainer = Color(0x28F9735B),
+    coralContainer = Color(0x1EE0523C),
     amber = Color(0xFFD97706),
-    amberContainer = Color(0x24F59E0B),
+    amberContainer = Color(0x1ED97706),
     heroObsidian = Color(0xFF090D14),
     heroObsidianTop = Color(0xFF0F1725)
 )
@@ -137,11 +137,11 @@ private val LightColors = lightColorScheme(
     onPrimaryContainer = Color(0xFF0F172A),
     secondary = Color(0xFF10B981),
     onSecondary = Color(0xFF042116),
-    background = Color(0xFFF4F6FA),
+    background = Color(0xFFF6F7FB),
     onBackground = Color(0xFF0F172A),
     surface = Color(0xFFFFFFFF),
     onSurface = Color(0xFF0F172A),
-    surfaceVariant = Color(0xFFEEF2F7),
+    surfaceVariant = Color(0xFFF1F5F9),
     onSurfaceVariant = Color(0xFF64748B),
     outline = Color(0x140F172A)
 )
@@ -153,7 +153,7 @@ private val DarkColors = darkColorScheme(
     onPrimaryContainer = Color(0xFF34D399),
     secondary = Color(0xFF34D399),
     onSecondary = Color(0xFF051A12),
-    background = Color(0xFF090D14),
+    background = Color(0xFF0A0F17),
     onBackground = Color(0xFFF1F5F9),
     surface = Color(0xFF121823),
     onSurface = Color(0xFFF1F5F9),

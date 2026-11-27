@@ -214,10 +214,13 @@ fun PhoneQrPairInputDialog(
                 OutlinedButton(
                     onClick = {
                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                        val clip = cm?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                        val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }
+                            ?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
                         if (clip.isNotBlank()) {
                             input = clip
                             errorMsg = null
+                        } else {
+                            Toast.makeText(context, "Clipboard đang trống", Toast.LENGTH_SHORT).show()
                         }
                     },
                     shape = RoundedCornerShape(12.dp),

@@ -53,7 +53,7 @@ data class MapWaypoint(
 ) {
     fun hasCoords(): Boolean = lat != null && lng != null
     fun coordString(): String = if (lat != null && lng != null) {
-        String.format("%.6f, %.6f", lat, lng)
+        String.format(java.util.Locale.US, "%.6f, %.6f", lat, lng)
     } else {
         label
     }

@@ -12,8 +12,8 @@ android {
         applicationId = "com.carmap.bridge"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "1.5.7"
+        versionCode = 14
+        versionName = "1.5.8"
 
         ndk {
             abiFilters += "arm64-v8a"
