@@ -641,10 +641,10 @@ class BlePhoneClient(
                 withTimeout(10_000L) {
                     val readyDeferred = CompletableDeferred<Pair<BluetoothGatt, BluetoothGattCharacteristic>>()
                     val ackDeferred = CompletableDeferred<String>()
-                    var negotiatedMtu = 23
+                    val negotiatedMtu = java.util.concurrent.atomic.AtomicInteger(23)
                     val ackBuffer = ByteArrayOutputStream()
                     var currentWriteSignal: CompletableDeferred<Boolean>? = null
-                    var servicesStarted = false
+                    val servicesStarted = java.util.concurrent.atomic.AtomicBoolean(false)
 
                     val cb = object : BluetoothGattCallback() {
                         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -657,19 +657,26 @@ class BlePhoneClient(
                             }
                             if (newState == BluetoothProfile.STATE_CONNECTED) {
                                 val requested = gatt.requestMtu(512)
-                                if (!requested && !servicesStarted) {
-                                    servicesStarted = true
-                                    gatt.discoverServices()
+                                if (!requested) {
+                                    if (servicesStarted.compareAndSet(false, true)) {
+                                        gatt.discoverServices()
+                                    }
+                                } else {
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        delay(1200L)
+                                        if (!readyDeferred.isCompleted && servicesStarted.compareAndSet(false, true)) {
+                                            runCatching { gatt.discoverServices() }
+                                        }
+                                    }
                                 }
                             }
                         }
 
                         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
                             if (status == BluetoothGatt.GATT_SUCCESS) {
-                                negotiatedMtu = mtu
+                                negotiatedMtu.set(mtu)
                             }
-                            if (!servicesStarted) {
-                                servicesStarted = true
+                            if (servicesStarted.compareAndSet(false, true)) {
                                 gatt.discoverServices()
                             }
                         }
@@ -744,7 +751,7 @@ class BlePhoneClient(
                     gattRef = gatt
                     val (connectedGatt, charData) = readyDeferred.await()
 
-                    val chunkSize = (negotiatedMtu - 3).coerceAtLeast(20)
+                    val chunkSize = (negotiatedMtu.get() - 3).coerceAtLeast(20)
                     var offset = 0
                     while (offset < payload.size) {
                         val end = min(offset + chunkSize, payload.size)
@@ -781,6 +788,7 @@ class BlePhoneClient(
                     resp.optString("message", "Đã gửi qua BLE tới $bleAddress")
                 }
             } finally {
+                runCatching { gattRef?.disconnect() }
                 runCatching { gattRef?.close() }
             }
         }

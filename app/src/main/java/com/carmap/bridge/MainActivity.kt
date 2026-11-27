@@ -149,6 +149,7 @@ class MainActivity : ComponentActivity() {
 
     private var lastDismissedClipboard: String? = null
     private val clipboardSuggestionState = mutableStateOf<String?>(null)
+    private var pendingSendClipboardOnFocus: Boolean = false
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -159,6 +160,10 @@ class MainActivity : ComponentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
+            if (pendingSendClipboardOnFocus) {
+                pendingSendClipboardOnFocus = false
+                sendClipboardNow()
+            }
             val state = BridgeRepository.state.value
             if (state.roleConfigured && state.role == DeviceRole.CAR_BOX_RECEIVER) {
                 runCatching {
@@ -170,6 +175,19 @@ class MainActivity : ComponentActivity() {
             } else {
                 inspectClipboardForSuggestion()
             }
+        }
+    }
+
+    private fun sendClipboardNow() {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)?.coerceToText(this)?.toString()?.trim().orEmpty()
+        if (clip.isNotBlank()) {
+            lifecycleScope.launch {
+                CarBridgeConnectionManager.sendClipboardToBox(this@MainActivity, clip)
+            }
+        } else {
+            Toast.makeText(this, "Clipboard đang trống", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -203,15 +221,10 @@ class MainActivity : ComponentActivity() {
         }
         if (intent.getBooleanExtra(CarBridgeNotifier.EXTRA_SEND_CLIPBOARD, false)) {
             intent.removeExtra(CarBridgeNotifier.EXTRA_SEND_CLIPBOARD)
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }
-                ?.getItemAt(0)?.coerceToText(this)?.toString()?.trim().orEmpty()
-            if (clip.isNotBlank()) {
-                lifecycleScope.launch {
-                    CarBridgeConnectionManager.sendClipboardToBox(this@MainActivity, clip)
-                }
+            if (hasWindowFocus()) {
+                sendClipboardNow()
             } else {
-                Toast.makeText(this, "Clipboard đang trống", Toast.LENGTH_SHORT).show()
+                pendingSendClipboardOnFocus = true
             }
         }
         val savedLink = intent.getStringExtra(CarBridgeWidgetProvider.EXTRA_SEND_SAVED_LINK)
@@ -290,8 +303,12 @@ class MainActivity : ComponentActivity() {
             onNotifPermResult = { granted -> hasNotificationPerm = granted }
 
             onBlePermResult = {
-                CarBridgeConnectionManager.refreshBle(BridgeRepository.state.value.bleEnabled)
-                BoxReceiverService.refreshBle(this@MainActivity)
+                val curState = BridgeRepository.state.value
+                if (curState.roleConfigured && curState.role == DeviceRole.CAR_BOX_RECEIVER) {
+                    BoxReceiverService.refreshBle(this@MainActivity)
+                } else {
+                    CarBridgeConnectionManager.refreshBle(curState.bleEnabled || curState.proximityOnly2m)
+                }
             }
 
             LaunchedEffect(Unit) {
@@ -304,13 +321,15 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
-            LaunchedEffect(state.roleConfigured, state.role) {
+            LaunchedEffect(state.roleConfigured, state.role, state.rootModeEnabled) {
                 if (state.roleConfigured && state.role == DeviceRole.CAR_BOX_RECEIVER) {
                     if (!state.boxServiceRunning) {
                         BoxReceiverService.start(this@MainActivity)
                     }
-                    val hasRoot = RootHelper.checkRootAccess()
-                    BridgeRepository.setRootDetected(hasRoot)
+                    if (state.rootModeEnabled) {
+                        val hasRoot = RootHelper.checkRootAccess()
+                        BridgeRepository.setRootDetected(hasRoot)
+                    }
                 }
             }
 
@@ -629,8 +648,12 @@ class MainActivity : ComponentActivity() {
                                         },
                                         onToggleBle = { enable ->
                                             BridgeRepository.setBleEnabled(enable)
-                                            CarBridgeConnectionManager.refreshBle(enable || BridgeRepository.state.value.proximityOnly2m)
-                                            BoxReceiverService.refreshBle(this@MainActivity)
+                                            val curState = BridgeRepository.state.value
+                                            if (curState.roleConfigured && curState.role == DeviceRole.CAR_BOX_RECEIVER) {
+                                                BoxReceiverService.refreshBle(this@MainActivity)
+                                            } else {
+                                                CarBridgeConnectionManager.refreshBle(enable || curState.proximityOnly2m)
+                                            }
                                         },
                                         onToggleProximity2m = { enable ->
                                             BridgeRepository.setProximityOnly2m(enable)
@@ -660,11 +683,19 @@ class MainActivity : ComponentActivity() {
                                             blePermissionLauncher.launch(BlePermissionsHelper.requiredPermissions())
                                         },
                                         onRequestOverlayPermission = {
-                                            val intent = Intent(
-                                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                                Uri.parse("package:$packageName")
-                                            )
-                                            startActivity(intent)
+                                            runCatching {
+                                                val intent = Intent(
+                                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                                    Uri.parse("package:$packageName")
+                                                )
+                                                startActivity(intent)
+                                            }.onFailure {
+                                                Toast.makeText(
+                                                    this@MainActivity,
+                                                    "ROM Box không có mục cấp quyền Overlay — hãy bật Chế độ Root nếu cần",
+                                                    Toast.LENGTH_LONG
+                                                ).show()
+                                            }
                                         },
                                         onRequestNotificationPermission = {
                                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -688,10 +719,13 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
+                            val boxNeedsOverlay = state.role == DeviceRole.CAR_BOX_RECEIVER &&
+                                !canDrawOverlays &&
+                                !(state.rootModeEnabled && state.rootDetected)
                             CockpitFloatingNavBar(
                                 tabs = tabs,
                                 selectedIndex = selectedTab.coerceIn(0, tabs.lastIndex),
-                                settingsHasBadge = (state.role == DeviceRole.CAR_BOX_RECEIVER && !canDrawOverlays) || availableUpdate != null,
+                                settingsHasBadge = boxNeedsOverlay || availableUpdate != null,
                                 onSelect = { selectedTab = it },
                                 modifier = Modifier
                                     .align(Alignment.BottomCenter)

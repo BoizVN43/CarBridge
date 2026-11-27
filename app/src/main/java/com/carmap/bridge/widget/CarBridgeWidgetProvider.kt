@@ -53,24 +53,33 @@ class CarBridgeWidgetProvider : AppWidgetProvider() {
                 )
             )
 
-            val openIntent = Intent(context, MainActivity::class.java).apply {
+            val homeIntent = Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 if (firstSaved != null) {
                     putExtra(EXTRA_SEND_SAVED_LINK, firstSaved.rawLink)
                 }
             }
+            val openAppIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
             views.setTextViewText(
                 R.id.btn_widget_home,
                 firstSaved?.label?.take(10) ?: "Mở App"
             )
-            val openPi = PendingIntent.getActivity(
+            val homePi = PendingIntent.getActivity(
                 context,
                 103,
-                openIntent,
+                homeIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            views.setOnClickPendingIntent(R.id.btn_widget_home, openPi)
-            views.setOnClickPendingIntent(R.id.widget_logo, openPi)
+            val logoPi = PendingIntent.getActivity(
+                context,
+                104,
+                openAppIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            views.setOnClickPendingIntent(R.id.btn_widget_home, homePi)
+            views.setOnClickPendingIntent(R.id.widget_logo, logoPi)
 
             appWidgetManager.updateAppWidget(appWidgetId, views)
         }

@@ -55,7 +55,7 @@ data class BridgeUiState(
     val lastAutoConnectNote: String? = null,
     val rootDetected: Boolean = false,
     val rootModeEnabled: Boolean = false,
-    val rootAutoSplitScreen: Boolean = true,
+    val rootAutoSplitScreen: Boolean = false,
     val rootSilentInstall: Boolean = true,
     val rootAutoEnableRadios: Boolean = false,
     val autoOpenOnBox: Boolean = true,
@@ -542,6 +542,7 @@ object BridgeRepository {
     }
 
     fun pushDirectShareShortcut(context: Context, box: DiscoveredBox) {
+        if (box.isLocalDemo || box.host == "127.0.0.1") return
         val app = context.applicationContext
         ioScope.launch {
             runCatching {

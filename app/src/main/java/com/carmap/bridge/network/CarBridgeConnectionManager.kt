@@ -587,6 +587,7 @@ object CarBridgeConnectionManager {
             }
         }
 
+        var resolvedBox = box
         val res = client?.sendHybridToBox(
             primaryBox = box,
             discoveredBoxes = state.discoveredBoxes,
@@ -601,15 +602,16 @@ object CarBridgeConnectionManager {
             fallbackLanPort = state.lastKnownLanPort,
             fallbackBleAddress = if (state.proximityOnly2m) null else state.lastKnownBleAddress,
             onWorkingBoxResolved = { working ->
+                resolvedBox = working
                 BridgeRepository.selectPairedBox(context, working)
             }
         ) ?: Result.failure(IllegalStateException("Chưa khởi tạo kết nối"))
 
         res.onSuccess { msg ->
-            onBoxSeenOnline(context, box)
+            onBoxSeenOnline(context, resolvedBox)
             CarBridgeNotifier.cancelSendFailedNotification(context)
             saveQueue(null)
-            if (!box.isLocalDemo) {
+            if (!resolvedBox.isLocalDemo) {
                 val spec = if (action == BridgeAction.MAP) {
                     MapIntentLauncher.buildLaunchSpec(context, parsed, effectiveTarget)
                 } else null
@@ -619,11 +621,11 @@ object CarBridgeConnectionManager {
                         BridgeAction.WEB_LINK -> "GỬI WEB"
                         else -> "ĐÃ GỬI"
                     },
-                    peerName = box.name,
+                    peerName = resolvedBox.name,
                     parsed = parsed,
                     targetProvider = spec?.effectiveProvider ?: MapProvider.UNKNOWN,
                     intentUri = spec?.intentUri ?: resolvedUrl,
-                    transportUsed = box.channel.label,
+                    transportUsed = resolvedBox.channel.label,
                     status = msg
                 )
             }
@@ -757,7 +759,12 @@ object CarBridgeConnectionManager {
                 }
             }
             btReceiver = receiver
-            context.registerReceiver(receiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+            ContextCompat.registerReceiver(
+                context,
+                receiver,
+                IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
+                ContextCompat.RECEIVER_EXPORTED
+            )
         }
     }
 }

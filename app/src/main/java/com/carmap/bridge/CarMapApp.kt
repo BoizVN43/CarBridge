@@ -1,6 +1,7 @@
 package com.carmap.bridge
 
 import android.app.Application
+import android.os.UserManager
 import com.carmap.bridge.data.BridgeRepository
 import com.carmap.bridge.network.CarBridgeConnectionManager
 import kotlinx.coroutines.CoroutineScope
@@ -13,9 +14,13 @@ class CarMapApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        BridgeRepository.init(this)
+        val unlocked = runCatching {
+            getSystemService(UserManager::class.java)?.isUserUnlocked != false
+        }.getOrDefault(true)
+        if (!unlocked) return
+        runCatching { BridgeRepository.init(this) }
         appScope.launch {
-            CarBridgeConnectionManager.init(this@CarMapApp)
+            runCatching { CarBridgeConnectionManager.init(this@CarMapApp) }
         }
     }
 }

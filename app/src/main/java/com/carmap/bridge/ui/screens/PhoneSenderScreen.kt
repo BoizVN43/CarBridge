@@ -28,6 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.Close
@@ -49,6 +50,7 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.UploadFile
+import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material.icons.rounded.WifiTethering
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -527,6 +529,98 @@ private fun HeroBoxTargetCard(
                                 Spacer(Modifier.width(4.dp))
                                 Text("Ping", fontSize = adaptive.sp(11f), color = Color(0xFF34D399), fontWeight = FontWeight.Bold)
                             }
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val wifiSelected = !state.preferBleOverLan
+                    val bleSelected = state.preferBleOverLan
+                    CockpitPill(
+                        onClick = {
+                            BridgeRepository.setPreferBleOverLan(false)
+                            state.discoveredBoxes.firstOrNull {
+                                it.channel == TransportChannel.LAN && !it.isLocalDemo
+                            }?.let { BridgeRepository.selectPairedBox(context, it) }
+                            com.carmap.bridge.network.CarBridgeConnectionManager.probeNow()
+                            BridgeRepository.setStatusBanner("Ưu tiên kết nối Wi-Fi / LAN")
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (wifiSelected) Color(0x2E10B981) else Color(0x14FFFFFF),
+                        border = BorderStroke(
+                            1.dp,
+                            if (wifiSelected) Color(0xFF34D399) else Color(0x1FFFFFFF)
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(adaptive.dp(36f))
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.Wifi,
+                                contentDescription = null,
+                                tint = if (wifiSelected) Color(0xFF34D399) else Color(0xFF94A3B8),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                text = "Wi-Fi / LAN",
+                                fontSize = adaptive.sp(11.5f),
+                                fontWeight = if (wifiSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                color = if (wifiSelected) Color(0xFF34D399) else Color(0xFFCBD5E1),
+                                maxLines = 1
+                            )
+                        }
+                    }
+
+                    CockpitPill(
+                        onClick = {
+                            BridgeRepository.setPreferBleOverLan(true)
+                            if (!state.bleEnabled) {
+                                BridgeRepository.setBleEnabled(true)
+                            }
+                            com.carmap.bridge.network.CarBridgeConnectionManager.refreshBle(true)
+                            state.discoveredBoxes.firstOrNull {
+                                it.channel == TransportChannel.BLE
+                            }?.let { BridgeRepository.selectPairedBox(context, it) }
+                            BridgeRepository.setStatusBanner("Ưu tiên kết nối Bluetooth LE")
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (bleSelected) Color(0x2E38BDF8) else Color(0x14FFFFFF),
+                        border = BorderStroke(
+                            1.dp,
+                            if (bleSelected) Color(0xFF38BDF8) else Color(0x1FFFFFFF)
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(adaptive.dp(36f))
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.Bluetooth,
+                                contentDescription = null,
+                                tint = if (bleSelected) Color(0xFF38BDF8) else Color(0xFF94A3B8),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                text = "Bluetooth LE",
+                                fontSize = adaptive.sp(11.5f),
+                                fontWeight = if (bleSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                color = if (bleSelected) Color(0xFF38BDF8) else Color(0xFFCBD5E1),
+                                maxLines = 1
+                            )
                         }
                     }
                 }

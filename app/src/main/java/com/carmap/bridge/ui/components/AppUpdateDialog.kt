@@ -324,7 +324,7 @@ fun AppUpdateDialog(
                         },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = accents.emerald,
-                            contentColor = Color(0xFF042116)
+                            contentColor = if (accents.isDark) Color(0xFF042116) else Color.White
                         ),
                         shape = RoundedCornerShape(999.dp)
                     ) {
@@ -356,7 +356,7 @@ fun AppUpdateDialog(
                         },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = accents.emerald,
-                            contentColor = Color(0xFF042116)
+                            contentColor = if (accents.isDark) Color(0xFF042116) else Color.White
                         ),
                         shape = RoundedCornerShape(999.dp)
                     ) {

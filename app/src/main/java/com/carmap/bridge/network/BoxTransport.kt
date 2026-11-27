@@ -167,7 +167,10 @@ class BoxServerTransport(
                     serverSocket = ss
                     while (isActive && !ss.isClosed) {
                         val client = ss.accept()
-                        launch { handleClient(client) }
+                        launch {
+                            runCatching { handleClient(client) }
+                                .onFailure { Log.w(BoxNetworkConstants.TAG, "Client handler error: ${it.message}") }
+                        }
                     }
                 }.onFailure {
                     if (isActive) {
@@ -269,7 +272,7 @@ class BoxServerTransport(
     private suspend fun handleClient(socket: Socket) {
         socket.use { s ->
             s.tcpNoDelay = true
-            s.soTimeout = 15_000
+            s.soTimeout = 35_000
             val rawIn = BufferedInputStream(s.getInputStream(), 32 * 1024)
             val writer = BufferedWriter(OutputStreamWriter(s.getOutputStream(), Charsets.UTF_8))
             val line = readHeaderLine(rawIn) ?: return
@@ -486,6 +489,7 @@ class PhoneDiscoveryAndClient(
     private val onBleScanStateChanged: (Boolean) -> Unit = {}
 ) {
     private val discoveryLock = Any()
+    private val discoveryActive = AtomicBoolean(false)
     private val discoveryGeneration = AtomicLong(0L)
     private var udpListenJob: Job? = null
     private var udpSocket: DatagramSocket? = null
@@ -514,14 +518,15 @@ class PhoneDiscoveryAndClient(
     }
 
     fun startDiscovery(enableBle: Boolean = true) {
+        discoveryActive.set(true)
         val gen = discoveryGeneration.incrementAndGet()
         scope.launch(Dispatchers.IO) {
-            if (discoveryGeneration.get() != gen) return@launch
+            if (!discoveryActive.get() || discoveryGeneration.get() != gen) return@launch
             acquireMulticastLock()
-            if (enableBle && discoveryGeneration.get() == gen) {
+            if (enableBle && discoveryActive.get() && discoveryGeneration.get() == gen) {
                 bleClient.startScan(balancedMode = false)
             }
-            if (discoveryGeneration.get() == gen) {
+            if (discoveryActive.get() && discoveryGeneration.get() == gen) {
                 startNsdDiscovery()
                 sendActiveProbe()
             }
@@ -529,7 +534,7 @@ class PhoneDiscoveryAndClient(
         synchronized(discoveryLock) {
             if (udpListenJob?.isActive == true) return
             udpListenJob = scope.launch(Dispatchers.IO) {
-                while (isActive && discoveryGeneration.get() == gen) {
+                while (isActive && discoveryActive.get()) {
                     runCatching {
                         val ds = DatagramSocket(null).apply {
                             reuseAddress = true
@@ -537,14 +542,14 @@ class PhoneDiscoveryAndClient(
                             bind(InetSocketAddress(BoxNetworkConstants.UDP_DISCOVERY_PORT))
                         }
                         synchronized(discoveryLock) {
-                            if (discoveryGeneration.get() != gen) {
+                            if (!discoveryActive.get()) {
                                 runCatching { ds.close() }
                                 return@launch
                             }
                             udpSocket = ds
                         }
                         val buf = ByteArray(1024)
-                        while (isActive && !ds.isClosed && discoveryGeneration.get() == gen) {
+                        while (isActive && !ds.isClosed && discoveryActive.get()) {
                             val dp = DatagramPacket(buf, buf.size)
                             ds.receive(dp)
                             val msg = String(dp.data, 0, dp.length, Charsets.UTF_8)
@@ -565,17 +570,15 @@ class PhoneDiscoveryAndClient(
                             }
                         }
                     }.onFailure {
-                        if (isActive && discoveryGeneration.get() == gen) {
+                        if (isActive && discoveryActive.get()) {
                             Log.w(BoxNetworkConstants.TAG, "UDP discovery restarting: ${it.message}")
                         }
                     }
                     synchronized(discoveryLock) {
-                        if (discoveryGeneration.get() == gen) {
-                            runCatching { udpSocket?.close() }
-                            udpSocket = null
-                        }
+                        runCatching { udpSocket?.close() }
+                        udpSocket = null
                     }
-                    if (isActive && discoveryGeneration.get() == gen) delay(1500L)
+                    if (isActive && discoveryActive.get()) delay(1500L)
                 }
             }
         }
@@ -718,6 +721,7 @@ class PhoneDiscoveryAndClient(
     }
 
     fun stopDiscovery() {
+        discoveryActive.set(false)
         val stopGen = discoveryGeneration.incrementAndGet()
         val us: DatagramSocket?
         val dl: NsdManager.DiscoveryListener?
@@ -787,6 +791,8 @@ class PhoneDiscoveryAndClient(
         }
     }
 
+    private class BoxRejectedException(message: String) : IllegalStateException(message)
+
     suspend fun sendHybridToBox(
         primaryBox: DiscoveredBox,
         discoveredBoxes: List<DiscoveredBox>,
@@ -855,7 +861,15 @@ class PhoneDiscoveryAndClient(
                 }
                 return res
             }
-            lastError = res.exceptionOrNull()
+            val err = res.exceptionOrNull()
+            lastError = err
+            val msg = err?.message.orEmpty()
+            if (err is BoxRejectedException ||
+                msg.contains("Sai mã PIN", ignoreCase = true) ||
+                msg.contains("Chế độ Root", ignoreCase = true)
+            ) {
+                return res
+            }
         }
         return Result.failure(lastError ?: IllegalStateException("Không thể kết nối tới Box"))
     }
@@ -870,7 +884,7 @@ class PhoneDiscoveryAndClient(
         action: BridgeAction
     ): Result<String> {
         val first = sendToBox(box, pin, senderName, rawText, resolvedUrl, preferredTarget, action)
-        if (first.isSuccess) return first
+        if (first.isSuccess || first.exceptionOrNull() is BoxRejectedException) return first
         delay(180L)
         return sendToBox(box, pin, senderName, rawText, resolvedUrl, preferredTarget, action)
     }
@@ -905,7 +919,7 @@ class PhoneDiscoveryAndClient(
                 val respStr = reader.readLine() ?: throw IllegalStateException("Box không phản hồi")
                 val resp = JSONObject(respStr)
                 if (!resp.optBoolean("ok", false)) {
-                    throw IllegalStateException(resp.optString("message", "Box từ chối gói tin"))
+                    throw BoxRejectedException(resp.optString("message", "Box từ chối gói tin"))
                 }
                 resp.optString("message", "Đã gửi tới ${box.name}")
             }

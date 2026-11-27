@@ -200,7 +200,12 @@ class BoxReceiverService : Service() {
                 addAction(Intent.ACTION_SCREEN_ON)
             }
             radioWakeReceiver = receiver
-            registerReceiver(receiver, filter)
+            androidx.core.content.ContextCompat.registerReceiver(
+                this@BoxReceiverService,
+                receiver,
+                filter,
+                androidx.core.content.ContextCompat.RECEIVER_EXPORTED
+            )
         }
     }
 
