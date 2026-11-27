@@ -84,9 +84,20 @@ object RootHelper {
         }
     }
 
-    suspend fun ensureRadiosEnabled(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun ensureRadiosEnabled(context: Context): Boolean = withContext(Dispatchers.IO) {
         if (!isRootGranted && !checkRootAccess()) return@withContext false
-        val (code, _) = execSu("svc wifi enable; svc bluetooth enable", 5_000L)
+        val isHotspotOn = runCatching {
+            val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+            val method = wm?.javaClass?.getDeclaredMethod("isWifiApEnabled")
+            method?.isAccessible = true
+            (method?.invoke(wm) as? Boolean) == true
+        }.getOrDefault(false)
+        val cmd = if (isHotspotOn) {
+            "svc bluetooth enable"
+        } else {
+            "svc wifi enable; svc bluetooth enable"
+        }
+        val (code, _) = execSu(cmd, 5_000L)
         code == 0
     }
 
@@ -109,14 +120,31 @@ object RootHelper {
     }
 
     suspend fun inspectWindowState(): WindowSnapshot = withContext(Dispatchers.IO) {
-        val (_, activities) = execSu("dumpsys activity activities", 3_000L)
+        val (_, activities) = execSu(
+            "dumpsys activity activities | grep -E 'Display #|topResumedActivity|mResumedActivity|ResumedActivity|windowingMode='",
+            3_500L
+        )
 
         val pkgRegex = Regex("""([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)/""")
         val visiblePkgs = linkedSetOf<String>()
         var topPkg: String? = null
+        var inDisplay0 = true
+        var hasSplitWindowMode = false
 
         activities.lineSequence().forEach { line ->
             val trimmed = line.trim()
+            if (trimmed.startsWith("Display #")) {
+                inDisplay0 = trimmed.startsWith("Display #0")
+                return@forEach
+            }
+            if (!inDisplay0) return@forEach
+
+            if (trimmed.contains("windowingMode=split-screen", ignoreCase = true) ||
+                trimmed.contains("windowingMode=3") ||
+                trimmed.contains("windowingMode=4")
+            ) {
+                hasSplitWindowMode = true
+            }
             if (trimmed.contains("topResumedActivity=", ignoreCase = true) ||
                 trimmed.contains("mResumedActivity:", ignoreCase = true) ||
                 trimmed.contains("ResumedActivity:", ignoreCase = true)
@@ -137,7 +165,7 @@ object RootHelper {
         }
 
         WindowSnapshot(
-            isInMultiWindow = activeUserApps.size >= 2,
+            isInMultiWindow = hasSplitWindowMode || activeUserApps.size >= 2,
             visiblePackages = visiblePkgs,
             topPackage = topPkg
         )
@@ -159,7 +187,6 @@ object RootHelper {
         // Case 1: Box is already in Split-Screen mode -> NEVER collapse split-screen!
         if (win.isInMultiWindow) {
             return@withContext if (pkg in win.visiblePackages) {
-                // Keep existing split window; deliver NEW_TASK | SINGLE_TOP intent directly into that split pane
                 val intentOk = runCatching {
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(spec.intentUri)).apply {
                         setPackage(pkg)
@@ -171,16 +198,15 @@ object RootHelper {
                 if (intentOk) {
                     true to "Đã cập nhật dẫn đường trong màn hình chia đôi"
                 } else {
-                    val (c, o) = execSu("am start -f 0x30000000 -a android.intent.action.VIEW -d $quotedUri -p $quotedPkg", 5_000L)
+                    val (c, o) = execSu("am start --display 0 -f 0x30000000 -a android.intent.action.VIEW -d $quotedUri -p $quotedPkg", 5_000L)
                     (c == 0 && !o.contains("Error:", ignoreCase = true)) to "Đã cập nhật dẫn đường trong màn hình chia đôi"
                 }
             } else {
-                // Launch another map app adjacent in multi-window
-                val (c, o) = execSu("am start -f 0x30001000 -a android.intent.action.VIEW -d $quotedUri -p $quotedPkg", 5_000L)
+                val (c, o) = execSu("am start --display 0 -f 0x30001000 -a android.intent.action.VIEW -d $quotedUri -p $quotedPkg", 5_000L)
                 if (c == 0 && !o.contains("Error:", ignoreCase = true)) {
                     true to "Đã mở bản đồ vào nửa màn hình chia đôi"
                 } else {
-                    val (c2, o2) = execSu("am start -a android.intent.action.VIEW -d $quotedUri -p $quotedPkg --activity-clear-top", 5_000L)
+                    val (c2, o2) = execSu("am start --display 0 -a android.intent.action.VIEW -d $quotedUri -p $quotedPkg", 5_000L)
                     (c2 == 0 && !o2.contains("Error:", ignoreCase = true)) to "Đã mở bản đồ qua Root"
                 }
             }
@@ -198,9 +224,9 @@ object RootHelper {
 
         if (isOtherAppFullscreen) {
             val splitCmd = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                "am start --windowingMode 6 -f 0x30001000 -a android.intent.action.VIEW -d $quotedUri -p $quotedPkg"
+                "am start --display 0 --windowingMode 6 -f 0x30001000 -a android.intent.action.VIEW -d $quotedUri -p $quotedPkg"
             } else {
-                "am start --windowingMode 4 -a android.intent.action.VIEW -d $quotedUri -p $quotedPkg"
+                "am start --display 0 --windowingMode 4 -a android.intent.action.VIEW -d $quotedUri -p $quotedPkg"
             }
             val (splitCode, splitOut) = execSu(splitCmd, 5_000L)
             if (splitCode == 0 &&
@@ -211,8 +237,20 @@ object RootHelper {
             }
         }
 
-        // Case 3: Standard forced Root launch
-        val (code, out) = execSu("am start -a android.intent.action.VIEW -d $quotedUri -p $quotedPkg --activity-clear-top", 5_000L)
+        // Case 3: Standard launch (prefer non-destructive startActivity first, fallback to Root --display 0)
+        val directOk = runCatching {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(spec.intentUri)).apply {
+                setPackage(pkg)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            context.startActivity(intent)
+            true
+        }.getOrDefault(false)
+        if (directOk) {
+            return@withContext true to "Đã mở bản đồ (Root Mode)"
+        }
+
+        val (code, out) = execSu("am start --display 0 -a android.intent.action.VIEW -d $quotedUri -p $quotedPkg", 5_000L)
         if (code == 0 && !out.contains("Error:", ignoreCase = true)) {
             true to "Đã mở bản đồ bằng quyền Root"
         } else {

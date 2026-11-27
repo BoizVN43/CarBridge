@@ -1083,6 +1083,30 @@ private fun CarToolsCard(
 ) {
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     var confirmReboot by remember { mutableStateOf(false) }
+    var confirmForceStopMaps by remember { mutableStateOf(false) }
+
+    if (confirmForceStopMaps) {
+        AlertDialog(
+            onDismissRequest = { confirmForceStopMaps = false },
+            title = { Text("Dọn các app bản đồ?") },
+            text = {
+                Text("Thao tác này sẽ đóng cứng Google Maps, Waze, Vietmap trên Box. Lưu ý: nếu XLauncher đang nhúng bản đồ trong Hub, khung Hub có thể bị tắt theo.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmForceStopMaps = false
+                        onSendBoxCommand("FORCE_STOP_MAPS", "Dọn Maps")
+                    }
+                ) {
+                    Text("Dọn ngay", color = accents.amber, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmForceStopMaps = false }) { Text("Hủy") }
+            }
+        )
+    }
 
     if (confirmReboot) {
         AlertDialog(
@@ -1246,8 +1270,11 @@ private fun CarToolsCard(
                     val (label, icon) = labelIcon
                     CockpitPill(
                         onClick = {
-                            if (cmd == "REBOOT") confirmReboot = true
-                            else onSendBoxCommand(cmd, label)
+                            when (cmd) {
+                                "REBOOT" -> confirmReboot = true
+                                "FORCE_STOP_MAPS" -> confirmForceStopMaps = true
+                                else -> onSendBoxCommand(cmd, label)
+                            }
                         },
                         shape = RoundedCornerShape(12.dp),
                         color = colors.first,

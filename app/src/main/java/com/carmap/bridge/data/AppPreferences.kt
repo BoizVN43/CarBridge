@@ -192,7 +192,7 @@ object AppPreferences {
             preferBleOverLan = p.getBoolean(KEY_PREFER_BLE, false),
             proximityOnly2m = p.getBoolean(KEY_PROXIMITY_ONLY_2M, false),
             rootModeEnabled = p.getBoolean(KEY_ROOT_MODE_ENABLED, false),
-            rootAutoSplitScreen = p.getBoolean(KEY_ROOT_AUTO_SPLIT, true),
+            rootAutoSplitScreen = p.getBoolean(KEY_ROOT_AUTO_SPLIT, false),
             rootSilentInstall = p.getBoolean(KEY_ROOT_SILENT_INSTALL, true),
             rootAutoEnableRadios = p.getBoolean(KEY_ROOT_AUTO_RADIOS, false),
             autoOpenOnBox = p.getBoolean(KEY_AUTO_OPEN, true),

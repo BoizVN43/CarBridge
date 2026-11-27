@@ -129,12 +129,14 @@ class BoxReceiverService : Service() {
 
         serviceScope.launch(Dispatchers.IO) {
             BoxServerTransport.cleanupOldReceivedFiles(this@BoxReceiverService)
-            val hasRoot = RootHelper.checkRootAccess()
-            BridgeRepository.setRootDetected(hasRoot)
-            if (hasRoot && BridgeRepository.state.value.rootModeEnabled) {
-                RootHelper.applySystemPrivileges(packageName)
-                if (BridgeRepository.state.value.rootAutoEnableRadios) {
-                    RootHelper.ensureRadiosEnabled()
+            if (BridgeRepository.state.value.rootModeEnabled) {
+                val hasRoot = RootHelper.checkRootAccess()
+                BridgeRepository.setRootDetected(hasRoot)
+                if (hasRoot) {
+                    RootHelper.applySystemPrivileges(packageName)
+                    if (BridgeRepository.state.value.rootAutoEnableRadios) {
+                        RootHelper.ensureRadiosEnabled(this@BoxReceiverService)
+                    }
                 }
             }
             lan.start()

@@ -938,7 +938,7 @@ private fun RootSettingsCard(
                 onCheckedChange = { enable ->
                     BridgeRepository.setRootAutoEnableRadios(enable)
                     if (enable) {
-                        scope.launch { RootHelper.ensureRadiosEnabled() }
+                        scope.launch { RootHelper.ensureRadiosEnabled(context) }
                     }
                 }
             )
